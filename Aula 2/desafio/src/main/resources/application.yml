@@ -1,0 +1,29 @@
+spring:
+  threads:
+    virtual:
+      enabled: true          # Variação A: Tomcat atende cada requisição numa thread virtual (Java 21)
+
+parceiro:
+  base-url: http://localhost:9999   # nos testes, trocado pela URL do WireMock
+  connect-timeout: 500ms            # tempo máximo para ABRIR a conexão
+  read-timeout: 1s                  # tempo máximo esperando a RESPOSTA (corta o parceiro lento)
+  retry-after-segundos: 2
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      parceiro:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 4              # olha as últimas 4 chamadas (pequeno para abrir rápido)
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50          # 50% de falha -> OPEN
+        slow-call-duration-threshold: 900ms
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 2s     # tempo em OPEN antes de testar de novo (HALF_OPEN)
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: false
+  bulkhead:
+    instances:
+      parceiro:
+        max-concurrent-calls: 200           # no máximo 200 chamadas simultâneas ao parceiro
+        max-wait-duration: 50ms

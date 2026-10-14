@@ -1,0 +1,70 @@
+### 2026-10-14 20:10 -03 | java: openjdk version "21.0.12.1" 2026-08-18 | Apache Maven 3.9.9
+### mvn -B test (resumo filtrado do log real)
+[INFO] Running br.com.ada.pagamentos.ResilienciaIntegrationTest
+>> parceiro com 3s de atraso; nossa API respondeu em 1015 ms
+>> circuito OPEN; nossa API respondeu em 2 ms
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.47 s -- in br.com.ada.pagamentos.ResilienciaIntegrationTest
+[INFO] Tests run: 14, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+[INFO] Total time:  12.802 s
+
+### App rodando (parceiro em localhost:9999 está DESLIGADO de propósito)
+2026-10-14T20:10:12.216-03:00  INFO 1159587 --- [           main] b.c.a.pagamentos.PagamentosApplication   : Starting PagamentosApplication v1.0.0 using Java 21.0.12.1 with PID 1159587 (/workspace/mf/mod2/a2/desafio/target/pagamentos-resiliente-1.0.0.jar started by box in /workspace/mf/mod2/a2/desafio)
+2026-10-14T20:10:14.412-03:00  INFO 1159587 --- [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8089 (http) with context path '/'
+2026-10-14T20:10:14.427-03:00  INFO 1159587 --- [           main] b.c.a.pagamentos.PagamentosApplication   : Started PagamentosApplication in 2.541 seconds (process running for 2.866)
+--- POST /pagamentos #1
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/parceiro-sem-conexao","title":"Service Unavailable","status":503,"detail":"Não foi possível conectar ao parceiro. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- POST /pagamentos #2
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/parceiro-sem-conexao","title":"Service Unavailable","status":503,"detail":"Não foi possível conectar ao parceiro. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- POST /pagamentos #3
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/parceiro-sem-conexao","title":"Service Unavailable","status":503,"detail":"Não foi possível conectar ao parceiro. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- POST /pagamentos #4
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/parceiro-sem-conexao","title":"Service Unavailable","status":503,"detail":"Não foi possível conectar ao parceiro. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- POST /pagamentos #5
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/circuito-aberto","title":"Service Unavailable","status":503,"detail":"Circuito aberto: o parceiro de pagamentos está instável. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- POST /pagamentos #6
+HTTP/1.1 503 
+Retry-After: 2
+Content-Type: application/problem+json
+
+{"type":"https://exemplo.ada/problemas/circuito-aberto","title":"Service Unavailable","status":503,"detail":"Circuito aberto: o parceiro de pagamentos está instável. Nada foi cobrado.","instance":"/pagamentos"}
+
+--- sem Idempotency-Key
+HTTP/1.1 400 
+Content-Type: application/problem+json
+
+{"type":"about:blank","title":"Bad Request","status":400,"detail":"Required header 'Idempotency-Key' is not present.","instance":"/pagamentos"}
+
+--- GET /v3/api-docs (trecho: códigos documentados)
+409 - Mesma Idempotency-Key ainda em processamento
+400 - Sem Idempotency-Key ou corpo inválido (Problem Details)
+500 - O parceiro pode ter cobrado e a contingência falhou ao registrar PENDENTE
+201 - Parceiro respondeu; status final dele
+422 - Idempotency-Key reutilizada com outro corpo
+503 - Parceiro indisponível e NADA foi cobrado (circuito aberto, conexão recusada, 429/503 do parceiro). Tente de novo com a mesma chave.
+202 - Fallback: parceiro lento ou com erro ambíguo. Pagamento PENDENTE; a reconciliação fecha depois. Reenviar com a mesma chave devolve esta resposta.
