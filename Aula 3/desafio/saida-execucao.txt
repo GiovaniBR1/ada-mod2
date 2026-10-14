@@ -1,0 +1,284 @@
+Pager usage is off.
+ setseed 
+---------
+ 
+(1 row)
+
+ANALYZE
+===== DESAFIO 1: ANTES =====
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Seq Scan on olist_orders  (cost=0.00..2789.00 rows=10 width=115) (actual time=0.004..6.474 rows=8 loops=1)
+   Filter: ((customer_id)::text = '13e36f06c66134ad65f532e90d898545'::text)
+   Rows Removed by Filter: 99992
+   Buffers: shared hit=1539
+ Planning:
+   Buffers: shared hit=31
+ Planning Time: 0.062 ms
+ Execution Time: 6.483 ms
+(8 rows)
+
+CREATE INDEX
+===== DESAFIO 1: DEPOIS =====
+                                                         QUERY PLAN                                                          
+-----------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on olist_orders  (cost=4.50..42.20 rows=10 width=115) (actual time=0.031..0.044 rows=8 loops=1)
+   Recheck Cond: ((customer_id)::text = '13e36f06c66134ad65f532e90d898545'::text)
+   Heap Blocks: exact=8
+   Buffers: shared hit=8 read=3
+   ->  Bitmap Index Scan on idx_orders_customer  (cost=0.00..4.49 rows=10 width=0) (actual time=0.023..0.023 rows=8 loops=1)
+         Index Cond: ((customer_id)::text = '13e36f06c66134ad65f532e90d898545'::text)
+         Buffers: shared read=3
+ Planning:
+   Buffers: shared hit=16 read=1
+ Planning Time: 0.179 ms
+ Execution Time: 0.060 ms
+(11 rows)
+
+===== DESAFIO 2: ANTES =====
+                                                                 QUERY PLAN                                                                  
+---------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=4179.95..4182.25 rows=20 width=83) (actual time=13.890..16.674 rows=20 loops=1)
+   Buffers: shared hit=1595
+   ->  Gather Merge  (cost=4179.95..6187.28 rows=17455 width=83) (actual time=13.888..16.670 rows=20 loops=1)
+         Workers Planned: 1
+         Workers Launched: 1
+         Buffers: shared hit=1595
+         ->  Sort  (cost=3179.94..3223.58 rows=17455 width=83) (actual time=12.225..12.227 rows=15 loops=2)
+               Sort Key: order_purchase_timestamp DESC
+               Sort Method: top-N heapsort  Memory: 29kB
+               Buffers: shared hit=1595
+               Worker 0:  Sort Method: top-N heapsort  Memory: 29kB
+               ->  Parallel Seq Scan on olist_orders  (cost=0.00..2715.47 rows=17455 width=83) (actual time=0.012..9.828 rows=14902 loops=2)
+                     Filter: (((order_status)::text = 'delivered'::text) AND (order_purchase_timestamp >= (now() - '30 days'::interval)))
+                     Rows Removed by Filter: 35098
+                     Buffers: shared hit=1539
+ Planning:
+   Buffers: shared hit=14
+ Planning Time: 0.071 ms
+ Execution Time: 16.690 ms
+(19 rows)
+
+----- 2b: índices isolados -----
+CREATE INDEX
+CREATE INDEX
+ANALYZE
+                                                                     QUERY PLAN                                                                     
+----------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.30..5.11 rows=20 width=83) (actual time=0.035..0.063 rows=20 loops=1)
+   Buffers: shared hit=21 read=2
+   ->  Index Scan Backward using idx_orders_ts on olist_orders  (cost=0.30..7189.12 rows=29903 width=83) (actual time=0.034..0.060 rows=20 loops=1)
+         Index Cond: (order_purchase_timestamp >= (now() - '30 days'::interval))
+         Filter: ((order_status)::text = 'delivered'::text)
+         Rows Removed by Filter: 1
+         Buffers: shared hit=21 read=2
+ Planning:
+   Buffers: shared hit=20 read=2
+ Planning Time: 0.202 ms
+ Execution Time: 0.077 ms
+(11 rows)
+
+DROP INDEX
+----- 2c: composto (igualdade, depois intervalo/ordenação) -----
+CREATE INDEX
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..3.92 rows=20 width=83) (actual time=0.042..0.066 rows=20 loops=1)
+   Buffers: shared hit=20 read=3
+   ->  Index Scan using idx_orders_status_ts on olist_orders  (cost=0.42..5230.25 rows=29903 width=83) (actual time=0.041..0.063 rows=20 loops=1)
+         Index Cond: (((order_status)::text = 'delivered'::text) AND (order_purchase_timestamp >= (now() - '30 days'::interval)))
+         Buffers: shared hit=20 read=3
+ Planning:
+   Buffers: shared hit=21 read=1
+ Planning Time: 0.215 ms
+ Execution Time: 0.084 ms
+(9 rows)
+
+----- 2d: ordem invertida (ts, status) -----
+DROP INDEX
+CREATE INDEX
+                                                                    QUERY PLAN                                                                    
+--------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=0.42..5.40 rows=20 width=83) (actual time=0.029..0.049 rows=20 loops=1)
+   Buffers: shared hit=20 read=3
+   ->  Index Scan using idx_orders_ts_status on olist_orders  (cost=0.42..7443.87 rows=29903 width=83) (actual time=0.028..0.046 rows=20 loops=1)
+         Index Cond: ((order_purchase_timestamp >= (now() - '30 days'::interval)) AND ((order_status)::text = 'delivered'::text))
+         Buffers: shared hit=20 read=3
+ Planning:
+   Buffers: shared hit=21 read=1
+ Planning Time: 0.168 ms
+ Execution Time: 0.062 ms
+(9 rows)
+
+DROP INDEX
+CREATE INDEX
+===== DESAFIO 3: ANTES =====
+                                                                                    QUERY PLAN                                                                                     
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=6952.76..6955.09 rows=20 width=96) (actual time=10.833..14.158 rows=20 loops=1)
+   Buffers: shared hit=7463
+   ->  Gather Merge  (cost=6952.76..6991.26 rows=330 width=96) (actual time=10.832..14.155 rows=20 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         Buffers: shared hit=7463
+         ->  Sort  (cost=5952.74..5953.15 rows=165 width=96) (actual time=8.508..8.510 rows=17 loops=3)
+               Sort Key: o.order_purchase_timestamp DESC
+               Sort Method: top-N heapsort  Memory: 29kB
+               Buffers: shared hit=7463
+               Worker 0:  Sort Method: top-N heapsort  Memory: 29kB
+               Worker 1:  Sort Method: top-N heapsort  Memory: 29kB
+               ->  Nested Loop  (cost=0.83..5948.34 rows=165 width=96) (actual time=0.087..8.420 rows=159 loops=3)
+                     Join Filter: ((i.order_id)::text = (o.order_id)::text)
+                     Buffers: shared hit=7449
+                     ->  Nested Loop  (cost=0.42..5858.22 rows=165 width=112) (actual time=0.055..7.375 rows=159 loops=3)
+                           Buffers: shared hit=5543
+                           ->  Parallel Seq Scan on olist_order_items i  (cost=0.00..4678.67 rows=165 width=72) (actual time=0.022..6.381 rows=159 loops=3)
+                                 Filter: ((seller_id)::text = '16a5cdae362b8d27a1d8f8c7b78b4330'::text)
+                                 Rows Removed by Filter: 66508
+                                 Buffers: shared hit=3637
+                           ->  Index Scan using olist_order_payments_pkey on olist_order_payments p  (cost=0.42..7.14 rows=1 width=40) (actual time=0.006..0.006 rows=1 loops=476)
+                                 Index Cond: ((order_id)::text = (i.order_id)::text)
+                                 Buffers: shared hit=1906
+                     ->  Index Scan using olist_orders_pkey on olist_orders o  (cost=0.42..0.53 rows=1 width=50) (actual time=0.006..0.006 rows=1 loops=476)
+                           Index Cond: ((order_id)::text = (p.order_id)::text)
+                           Buffers: shared hit=1906
+ Planning:
+   Buffers: shared hit=138 read=1
+ Planning Time: 0.669 ms
+ Execution Time: 14.185 ms
+(31 rows)
+
+CREATE INDEX
+===== DESAFIO 3: DEPOIS =====
+                                                                        QUERY PLAN                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit  (cost=3995.33..3995.38 rows=20 width=96) (actual time=18.626..18.635 rows=20 loops=1)
+   Buffers: shared hit=3457 read=4
+   ->  Sort  (cost=3995.33..3996.32 rows=395 width=96) (actual time=18.625..18.630 rows=20 loops=1)
+         Sort Key: o.order_purchase_timestamp DESC
+         Sort Method: top-N heapsort  Memory: 29kB
+         Buffers: shared hit=3457 read=4
+         ->  Nested Loop  (cost=1156.53..3984.82 rows=395 width=96) (actual time=0.938..18.457 rows=476 loops=1)
+               Join Filter: ((i.order_id)::text = (o.order_id)::text)
+               Buffers: shared hit=3457 read=4
+               ->  Hash Join  (cost=1156.12..3769.07 rows=395 width=112) (actual time=0.925..16.513 rows=476 loops=1)
+                     Hash Cond: ((p.order_id)::text = (i.order_id)::text)
+                     Buffers: shared hit=1553 read=4
+                     ->  Seq Scan on olist_order_payments p  (cost=0.00..2109.00 rows=100000 width=40) (actual time=0.008..6.932 rows=100000 loops=1)
+                           Buffers: shared hit=1109
+                     ->  Hash  (cost=1151.18..1151.18 rows=395 width=72) (actual time=0.885..0.887 rows=476 loops=1)
+                           Buckets: 1024  Batches: 1  Memory Usage: 57kB
+                           Buffers: shared hit=444 read=4
+                           ->  Bitmap Heap Scan on olist_order_items i  (cost=7.48..1151.18 rows=395 width=72) (actual time=0.144..0.761 rows=476 loops=1)
+                                 Recheck Cond: ((seller_id)::text = '16a5cdae362b8d27a1d8f8c7b78b4330'::text)
+                                 Heap Blocks: exact=444
+                                 Buffers: shared hit=444 read=4
+                                 ->  Bitmap Index Scan on idx_items_seller  (cost=0.00..7.38 rows=395 width=0) (actual time=0.099..0.099 rows=476 loops=1)
+                                       Index Cond: ((seller_id)::text = '16a5cdae362b8d27a1d8f8c7b78b4330'::text)
+                                       Buffers: shared read=4
+               ->  Index Scan using olist_orders_pkey on olist_orders o  (cost=0.42..0.53 rows=1 width=50) (actual time=0.004..0.004 rows=1 loops=476)
+                     Index Cond: ((order_id)::text = (p.order_id)::text)
+                     Buffers: shared hit=1904
+ Planning:
+   Buffers: shared hit=66 read=1
+ Planning Time: 0.533 ms
+ Execution Time: 18.671 ms
+(31 rows)
+
+----- 3b: FK não cria índice; DELETE no pai -----
+        indexrelid         
+---------------------------
+ olist_order_items_pkey
+ olist_order_payments_pkey
+ idx_items_seller
+(3 rows)
+
+BEGIN
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Delete on olist_orders  (cost=0.42..8.44 rows=0 width=0) (actual time=0.088..0.088 rows=0 loops=1)
+   Buffers: shared hit=22
+   ->  Index Scan using olist_orders_pkey on olist_orders  (cost=0.42..8.44 rows=1 width=6) (actual time=0.009..0.009 rows=1 loops=1)
+         Index Cond: ((order_id)::text = '5dc7b6a5cabbd7117371c06d9e34e009'::text)
+         Buffers: shared hit=4
+ Planning Time: 0.030 ms
+ Trigger for constraint fk_order_items_orders: time=0.175 calls=1
+ Trigger for constraint fk_order_payments_orders: time=0.067 calls=1
+ Execution Time: 0.406 ms
+(9 rows)
+
+ROLLBACK
+===== DESAFIO 4 =====
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Seq Scan on olist_orders  (cost=0.00..2789.00 rows=89953 width=115) (actual time=0.009..10.610 rows=89950 loops=1)
+   Filter: ((order_status)::text = 'delivered'::text)
+   Rows Removed by Filter: 10050
+   Buffers: shared hit=1539
+ Planning:
+   Buffers: shared hit=18
+ Planning Time: 0.057 ms
+ Execution Time: 13.964 ms
+(8 rows)
+
+                                                           QUERY PLAN                                                            
+---------------------------------------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on olist_orders  (cost=38.64..1620.14 rows=3400 width=115) (actual time=0.287..1.641 rows=3352 loops=1)
+   Recheck Cond: ((order_status)::text = 'canceled'::text)
+   Heap Blocks: exact=1388
+   Buffers: shared hit=1388 read=4
+   ->  Bitmap Index Scan on idx_orders_status  (cost=0.00..37.79 rows=3400 width=0) (actual time=0.164..0.164 rows=3352 loops=1)
+         Index Cond: ((order_status)::text = 'canceled'::text)
+         Buffers: shared read=4
+ Planning Time: 0.057 ms
+ Execution Time: 1.765 ms
+(9 rows)
+
+ order_status | pct  
+--------------+------
+ shipped      |  3.4
+ delivered    | 90.0
+ invoiced     |  3.3
+ canceled     |  3.4
+(4 rows)
+
+===== DESAFIO 5 =====
+ tamanho_tabela | total_estruturas_auxiliares 
+----------------+-----------------------------
+ 12 MB          | 13 MB
+(1 row)
+
+        indice        | pg_size_pretty 
+----------------------+----------------
+ olist_orders_pkey    | 7432 kB
+ idx_orders_customer  | 1288 kB
+ idx_orders_status    | 704 kB
+ idx_orders_status_ts | 3960 kB
+(4 rows)
+
+CREATE TABLE
+CREATE TABLE
+Timing is on.
+INSERT 0 300000
+Time: 524.286 ms
+INSERT 0 300000
+Time: 1330.209 ms (00:01.330)
+Timing is off.
+CREATE EXTENSION
+   t    |   tam   | avg_leaf_density 
+--------+---------+------------------
+ t_seq  | 6600 kB |            90.05
+ t_rand | 22 MB   |            70.32
+(2 rows)
+
+DROP TABLE
+===== DESAFIO 6 =====
+ calls | total_ms | media_ms |  rows  |                                           query                                            
+-------+----------+----------+--------+--------------------------------------------------------------------------------------------
+     1 |   1314.7 |  1314.69 | 300000 | INSERT INTO t_rand SELECT md5(random()::text), g FROM generate_series($1,$2) g
+     1 |    512.2 |   512.17 | 300000 | INSERT INTO t_seq (x) SELECT g FROM generate_series($1,$2) g
+     1 |    319.6 |   319.63 |      0 | ANALYZE
+     2 |    128.7 |    64.35 |      0 | CREATE INDEX idx_orders_status_ts ON olist_orders (order_status, order_purchase_timestamp 
+     1 |    119.0 |   118.97 |      0 | CREATE INDEX idx_items_seller ON olist_order_items (seller_id)
+(5 rows)
+
