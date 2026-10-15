@@ -72,6 +72,15 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   >
   > Um prazo (`travado_ate`) no `EM_PROCESSAMENTO` evita chave presa se a réplica cair no meio; vencido o prazo, o pagamento já está gravado como `PENDENTE` e a reconciliação assume.
   >
+  > **Campos principais** (o modelo completo, com pedido, reserva e estoque, está na Aula 03):
+  >
+  > | Tabela | Campos | Constraints |
+  > |---|---|---|
+  > | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | **`UNIQUE (chave)`**: é ela que decide quem chegou primeiro; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
+  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint` | **`UNIQUE (order_id)`**: um pagamento por pedido, a segunda trava; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`. |
+  >
+  > **Escolha de negócio: cartão recusado encerra a compra.** A chave é da intenção e o pagamento é único por pedido, então um `402` é resposta final daquela chave: repetir devolve o mesmo `402`; trocar o cartão com a mesma chave muda o corpo e dá `422`. Para tentar outro cartão, o cliente começa um **checkout novo**, com chave nova (nova intenção) e pedido novo. Aceitamos isso pela simplicidade: um pedido, uma cobrança. Várias tentativas no mesmo pedido ficam para quando o negócio pedir (DOR).
+  >
   > ```mermaid
   > sequenceDiagram
   >   participant C as Cliente
@@ -121,5 +130,6 @@ Cole aqui as 3 perguntas de risco que você formulou e defina como a arquitetura
   > | 503 seguido de 200 (cenários do WireMock) | Houve retry e **cada tentativa levou a mesma chave**: `verify(postRequestedFor(urlEqualTo("/charges")).withHeader("Idempotency-Key", equalTo(k)))`, e nenhuma com chave diferente. Timeout: **exatamente 1** chamada ao parceiro. |
   > | Duas requisições simultâneas com a mesma chave | Uma `201`, uma `409`; o parceiro recebe 1 chamada. |
   > | Recusa (`402`) repetida | O circuito **continua** `CLOSED`: recusa não é falha técnica. |
+  > | Recusa e depois outro cartão com a mesma chave | `422`; o WireMock **não recebe** nova cobrança. |
   >
   > **Limite do stub (PIRÂMIDE):** o WireMock devolve o que mandamos. Ele não prova que o parceiro real deduplica pela chave, nem como ele responde a um timeout. Por isso há também um teste de contrato no **sandbox do parceiro**: mesma chave duas vezes → uma cobrança só; e a consulta usada pela reconciliação devolve o estado esperado.

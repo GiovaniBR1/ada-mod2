@@ -63,6 +63,26 @@
   >
   > **A `Idempotency-Key` da Aula 02 não muda.** Ela é gerada pelo cliente (UUID qualquer) e é uma coluna `UNIQUE`, não a PK; o índice dela recebe inserções aleatórias, custo aceito porque a tabela é pequena (TTL de 24 h, linhas antigas apagadas).
 
+### 1.3 Modelo de Dados (campos principais)
+
+- **Tabelas da compra:**
+  > Só o que a compra precisa. IDs são `uuid` v7 gerados no Java (1.2); dinheiro é `numeric(12,2)`, nunca `float`; datas são `timestamptz`; status são `text` com `CHECK` na lista de valores (legível no `psql` e mapeado com `@Enumerated(EnumType.STRING)`).
+  >
+  > | Tabela | Campos principais | Constraints e regras |
+  > |---|---|---|
+  > | `produto` | `sku text`, `nome text`, `preco numeric(12,2)`, `atributos jsonb` | PK `sku`; `CHECK (preco > 0)`. É daqui que sai o preço **cobrado** (1.1). |
+  > | `estoque` | `sku text`, `disponivel int` | PK e FK `sku` → `produto`; `CHECK (disponivel >= 0)`. **Sem `@Version`**: a trava é o `UPDATE` atômico (2.2). |
+  > | `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK` na lista de `order_status` (ex.: `processing`, `delivered`); `@Version` (baixa disputa, como 2.1). Índices na seção 3.2. |
+  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e **`UNIQUE (order_id)`: um pagamento por pedido**; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`; `@Version` (2.1). |
+  > | `reserva` | `id uuid`, `order_id uuid`, `sku text`, `qtd int`, `status text`, `expira_em timestamptz` | FKs para `pedidos` e `estoque`; `UNIQUE (order_id, sku)`; `CHECK (qtd > 0)`; `CHECK (status IN ('ATIVA','CONFIRMADA','LIBERADA'))`; `expira_em NOT NULL`. |
+  > | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | PK `id`; **`UNIQUE (chave)`** (1.2); `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
+  >
+  > **Como a chave única da compra funciona:** duas travas no banco, nenhuma na memória. (1) `UNIQUE (chave)` em `idempotency_keys`: de duas requisições com a mesma chave, só um `INSERT` vence (Aula 02). (2) `UNIQUE (order_id)` em `pagamento`: mesmo depois que a chave expira e é apagada, o pedido não ganha uma segunda cobrança.
+  >
+  > **Como o estado da reserva funciona:** nasce `ATIVA` na T1, com `expira_em`. Só sai de `ATIVA`, e uma vez só: `APROVADO` → `CONFIRMADA`; `RECUSADO`, `EXPIRADO` ou prazo vencido → `LIBERADA`, devolvendo a unidade. Toda transição é `UPDATE ... WHERE status = 'ATIVA'`; 0 linhas afetadas = alguém já fechou, não faz nada (ESTADO).
+  >
+  > **Escolha de negócio: cartão recusado encerra o pedido.** A `Idempotency-Key` é a chave da compra (da intenção, Aula 02) e o pagamento é único por pedido. Então um `402` fica guardado como resposta final: repetir com a mesma chave devolve o mesmo `402`, e mandar outro cartão com a mesma chave muda o corpo e dá `422`. Para tentar outro cartão, o cliente **começa um checkout novo** (chave nova, pedido novo) e disputa o estoque de novo, porque a reserva do pedido recusado já foi liberada. Aceitamos isso pela simplicidade: um pedido, uma cobrança, sem estado de "segunda tentativa". **Descartado por agora:** várias tentativas no mesmo pedido (tabela de tentativas com `UNIQUE` parcial em `order_id WHERE status IN ('PENDENTE','APROVADO')`, segurando a reserva). Só entra se o negócio pedir, por exemplo se medirmos venda perdida depois de recusa (DOR).
+
 ---
 
 ## 2. A Dualidade da Concorrência: Locks e Mitigações
@@ -95,7 +115,7 @@
 - **Justificativa:**
   > Com centenas de clientes no mesmo produto, o otimista vira uma tempestade de falhas: quase todos leem a mesma versão, um vence e o resto recebe `OptimisticLockException`, tenta de novo e perde de novo. Gasta CPU e conexão e frustra o cliente que ainda tinha unidade para comprar.
   >
-  > **Implementação: um `UPDATE` atômico e condicional**, que pega o lock de linha só pelo tempo do próprio comando:
+  > **Implementação: um `UPDATE` atômico e condicional.** Ele trava a linha do produto, e no Postgres o lock de linha só é solto no **commit** da transação. Por isso esse `UPDATE` é o **último comando da T1**, logo antes do commit:
   >
   > ```sql
   > UPDATE estoque
@@ -107,9 +127,28 @@
   > É lock pessimista (o Postgres trava a linha e as outras esperam), mas sem o "lê, calcula no Java, grava": a regra mora numa frase só, e o `CHECK (disponivel >= 0)` na tabela é a segunda trava. O `SELECT ... FOR UPDATE` explícito (`@Lock(LockModeType.PESSIMISTIC_WRITE)` no repositório) fica para quando a regra não cabe num `UPDATE`.
   >
   > **Regra de ouro (herdada da Aula 02): nunca segurar lock nem transação durante a chamada ao parceiro.** O fluxo tem duas transações curtas:
-  > 1. **T1** (milissegundos): grava a `Idempotency-Key`, reserva o estoque (`reserva` com `expira_em`), cria pedido e pagamento `PENDENTE`. Commit.
+  > 1. **T1** (milissegundos): grava a `Idempotency-Key`, cria pedido, pagamento `PENDENTE` e `reserva` (`ATIVA`, com `expira_em`) e, **por último**, baixa o estoque (o `UPDATE` acima). Commit. Se o `UPDATE` afetar 0 linhas, a T1 inteira volta (`ROLLBACK`) e a resposta é `409`.
   > 2. Chama o parceiro **fora de transação** (Resilience4j).
-  > 3. **T2**: fecha o pagamento (2.1). Se `RECUSADO` ou `EXPIRADO`, na mesma transação, libera a reserva e devolve a unidade, só se a reserva ainda estiver `ATIVA` (`UPDATE reserva SET status='LIBERADA' WHERE id=? AND status='ATIVA'`). Isso impede devolver duas vezes (ESTADO).
+  > 3. **T2**: fecha o pagamento (2.1). Se `RECUSADO` ou `EXPIRADO`, na mesma transação, libera a reserva e devolve a unidade, só se a reserva ainda estiver `ATIVA` (`UPDATE reserva SET status='LIBERADA' WHERE id=? AND status='ATIVA'`). Isso impede devolver duas vezes (ESTADO). Se `APROVADO`, marca a reserva `CONFIRMADA`, com a mesma guarda `WHERE status='ATIVA'`.
+  >
+  > **Quanto a linha quente aguenta (estimativa, não medida).** A linha do produto atende **uma compra por vez**: enquanto uma T1 segura o lock, as outras esperam na fila. A conta é:
+  >
+  > **máximo de compras/s por produto ≈ 1000 ms ÷ X**, onde X é o tempo (em ms) que a T1 segura o lock, do `UPDATE` do estoque até o commit.
+  >
+  > | Hipótese para X (a validar no teste de carga) | Conta | Máximo por produto |
+  > |---|---|---|
+  > | Caso bom: banco perto da aplicação, disco rápido, X ≈ 2 ms | 1000 ÷ 2 | ≈ 500 compras/s |
+  > | **Referência:** `UPDATE` + `COMMIT` (duas idas ao banco + gravação do WAL em disco), X ≈ 4 ms | 1000 ÷ 4 | **≈ 250 compras/s** |
+  > | `UPDATE` no começo da T1 (o lock segura também os `INSERT`), X ≈ 10 ms | 1000 ÷ 10 | ≈ 100 compras/s |
+  >
+  > **Os primeiros segundos (exemplo com X = 4 ms):** 5.000 pedidos do mesmo produto chegam juntos.
+  > - A fila anda a 250/s: o último esperaria 5.000 ÷ 250 = **20 s**. Mais conexões **não** aceleram nada (a linha é uma só); só aumentam a espera.
+  > - O `lock_timeout = '2s'` corta antes: só as primeiras ~250 × 2 = **500** posições da fila pegam o lock; o resto espera 2 s e recebe `503`. Mas cada um ficou **2 s segurando uma conexão**: com um pool de, por exemplo, 50 conexões, a fila de **um** produto ocupa o pool inteiro e trava a compra de **todos** os outros.
+  > - **Por isso há um limite antes do banco:** um **Bulkhead por produto** (semáforo do Resilience4j, o mesmo padrão da Aula 02, uma instância por `sku`, envolvendo a T1 inteira), com poucas vagas (ex.: 8 por réplica) e `max-wait-duration` curto (ex.: 50 ms). Quem não pega vaga recebe `503` + `Retry-After` **sem abrir conexão** e sem gravar a chave; o cliente repete com a mesma `Idempotency-Key`.
+  > - **Espera com o Bulkhead:** 4 réplicas × 8 vagas = 32 na fila da linha → espera máxima ≈ 32 × 4 ms ≈ **130 ms**, bem abaixo dos 2 s. O produto quente usa no máximo 8 conexões por réplica; o resto do pool fica para os outros produtos. O `lock_timeout` vira rede de segurança, não o controle do dia a dia.
+  > - **Quando o estoque acaba**, o `UPDATE` não acha mais `disponivel >= :qtd` e responde `409` na hora: a fila some sozinha (ex.: 100 unidades a 250/s acabam em ~0,4 s).
+  >
+  > Todos esses números são **hipóteses de ordem de grandeza**, não medidas. X, as vagas do Bulkhead e o tamanho do pool saem do teste de carga (seção 5).
 
 ### 2.3 Riscos e Mitigações
 
@@ -117,8 +156,8 @@
   > | Risco | Onde | Mitigação |
   > |---|---|---|
   > | Excesso de `OptimisticLockException` | Pagamento (2.1) | Conflito é raro por desenho. Quem perde relê e respeita o estado; nada de retry cego. Métrica de taxa de conflitos com alerta: subiu, alguém está disputando o que não devia. |
-  > | Fila de espera no lock do produto quente | Estoque (2.2) | O lock dura só o `UPDATE` (T1 curta, sem chamada externa). `SET LOCAL lock_timeout = '2s'` na transação: quem não consegue o lock em 2 s recebe erro e responde `503` com `Retry-After`, em vez de prender conexão. |
-  > | Pool de conexões com o banco esgotado (`ConnectionTimeoutException`) | Todo o banco | Com threads virtuais, threads são baratas; o limite real é o pool (Aula 02). `connectionTimeout` curto (ex.: 2 s) para falhar rápido com `503`; o **Bulkhead** da Aula 02 limita quantas requisições chegam ao banco ao mesmo tempo. O tamanho do pool sai do teste de carga, não de chute. |
+  > | Fila de espera no lock do produto quente | Estoque (2.2) | O lock dura só o `UPDATE` (T1 curta, sem chamada externa). `SET LOCAL lock_timeout = '2s'` na transação: quem não consegue o lock em 2 s recebe erro e responde `503` com `Retry-After`, em vez de prender conexão. Conta da vazão e da espera em 2.2 (estimativa). |
+  > | Pool de conexões com o banco esgotado (`ConnectionTimeoutException`) | Todo o banco | Com threads virtuais, threads são baratas; o limite real é o pool (Aula 02). `connectionTimeout` curto (ex.: 2 s) para falhar rápido com `503`; um **Bulkhead por produto** (o padrão da Aula 02, que lá protege o parceiro, agora antes do banco) limita quantas requisições do mesmo produto chegam ao banco ao mesmo tempo (2.2). O tamanho do pool sai do teste de carga, não de chute. |
   > | *Deadlock* | Carrinho com vários produtos | Duas compras travando produtos em ordem diferente (A→B e B→A) se esperam para sempre. O Postgres detecta (após `deadlock_timeout`, 1 s por padrão) e aborta uma com erro `40P01`. Mitigação: **reservar os produtos sempre em ordem crescente de `sku`**; o abortado repete a T1 uma vez, sem efeito colateral, porque nada foi commitado. |
   > | Unidade presa por pagamento que não fecha | Estoque | A reserva tem `expira_em`; a reconciliação da Aula 02, ao marcar `EXPIRADO`, libera a reserva (2.2, passo 3). |
   >
@@ -171,7 +210,7 @@ sequenceDiagram
   participant DB as PostgreSQL (primário)
   participant P as Parceiro
   C->>API: POST /checkout (Idempotency-Key)
-  API->>DB: T1: INSERT chave UNIQUE + UPDATE estoque (disponivel >= qtd) + pedido + pagamento PENDENTE
+  API->>DB: T1: INSERT chave UNIQUE + pedido + pagamento PENDENTE + reserva ATIVA; por último UPDATE estoque (disponivel >= qtd)
   alt 0 linhas no estoque
     DB-->>API: esgotado
     API-->>C: 409 (nada cobrado)
@@ -201,10 +240,12 @@ sequenceDiagram
 | 200 threads compram o mesmo produto com 5 unidades | Exatamente 5 pedidos `201`, 195 respostas `409`, `disponivel = 0`, nunca negativo. Sem o `WHERE disponivel >= :qtd`, o teste fica vermelho. |
 | Duas transações fecham o mesmo `PENDENTE` (`CountDownLatch` para sincronizar) | Uma vence; a outra recebe `ObjectOptimisticLockingFailureException`; o status final é o do vencedor e a reserva foi liberada no máximo uma vez. |
 | Pagamento recusado | Reserva `LIBERADA`, estoque devolvido; repetir o fechamento não devolve de novo. |
+| Recusado e depois outro cartão com a mesma chave | `422`, nenhuma chamada nova ao parceiro; o mesmo cartão com a mesma chave devolve o `402` guardado. |
+| Bulkhead do produto cheio | `503` + `Retry-After` sem pegar conexão do pool (métrica de conexões ativas não sobe). |
 | Carrinho A+B e B+A em paralelo | Nenhum *deadlock* (ordenação por `sku`); com a ordenação removida, aparece `40P01`. |
 | Lock preso por 5 s numa conexão de teste | A compra concorrente responde `503` em ~2 s (`lock_timeout`), sem prender a conexão. |
 | Consulta de pedidos por cliente e status, com 1 milhão de linhas | O plano (`EXPLAIN (FORMAT JSON)`) usa o índice composto; não aparece `Seq Scan` em `pedidos`. |
 | Migration do índice | Roda com `CONCURRENTLY` enquanto outra thread insere pedidos: os `INSERT` não ficam bloqueados. |
 | Leitura do status logo após comprar | Vem do primário (rota de escrita), nunca da réplica. |
 
-**Limite:** o Testcontainers prova a regra, não a escala. O p99 e o tamanho do pool saem de um teste de carga (ex.: Gatling ou k6) num banco com volume de produção, medindo o pool de conexões com o banco, `pg_stat_statements` e p99 antes e depois de cada mudança.
+**Limite:** o Testcontainers prova a regra, não a escala. O p99, o tempo real do lock (o X da seção 2.2), as vagas do Bulkhead e o tamanho do pool saem de um teste de carga (ex.: Gatling ou k6) num banco com volume de produção, medindo o pool de conexões com o banco, `pg_stat_statements` e p99 antes e depois de cada mudança.
