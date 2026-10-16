@@ -105,7 +105,7 @@
 >
 > | Serviço | Tabela | Campos principais | Constraints e regras |
 > |---|---|---|---|
-> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `version bigint` | `CHECK (status IN ('PENDENTE','AGUARDANDO_PAGAMENTO','PAGO','CONCLUIDO','ESTORNANDO','ESTORNO_EM_REVISAO','CANCELADO'))`; índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
+> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK (status IN ('PENDENTE','AGUARDANDO_PAGAMENTO','PAGO','CONCLUIDO','ESTORNANDO','ESTORNO_EM_REVISAO','CANCELADO'))`; índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
 > | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 > | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 > | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
