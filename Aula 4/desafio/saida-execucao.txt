@@ -1,0 +1,65 @@
+
+== 1. Caminho feliz
+  pedido pedido-1: PENDENTE -> AGUARDANDO_PAGAMENTO
+  pedido pedido-1: AGUARDANDO_PAGAMENTO -> PAGO
+  pedido pedido-1: PAGO -> CONCLUIDO
+  Meus Pedidos mostra: Confirmado
+  [OK] status final: CONCLUIDO
+  [OK] reserva: CONFIRMADA
+
+== 2. O incidente: Pix aprovado, estoque rejeita a confirmação
+  pedido pedido-1: PENDENTE -> AGUARDANDO_PAGAMENTO
+  pedido pedido-1: AGUARDANDO_PAGAMENTO -> PAGO
+  reserva expirou e a última unidade foi vendida para outra pessoa
+  pedido pedido-1: PAGO -> ESTORNANDO
+  pedido pedido-1: ESTORNANDO -> CANCELADO
+  Meus Pedidos mostra: Cancelado (valor devolvido, se houve cobrança)
+  [OK] status final: CANCELADO
+  [OK] pagamento: ESTORNADO
+  [OK] devoluções feitas no PSP: 1
+
+== 3. O estorno falha 2 vezes (PSP instável) e passa na 3ª
+  pedido pedido-1: PENDENTE -> AGUARDANDO_PAGAMENTO
+  pedido pedido-1: AGUARDANDO_PAGAMENTO -> PAGO
+  reserva expirou e a última unidade foi vendida para outra pessoa
+  pedido pedido-1: PAGO -> ESTORNANDO
+  estorno falhou (tentativa 1), tenta de novo com espera crescente
+  estorno falhou (tentativa 2), tenta de novo com espera crescente
+  pedido pedido-1: ESTORNANDO -> CANCELADO
+  Meus Pedidos mostra: Cancelado (valor devolvido, se houve cobrança)
+  [OK] status final: CANCELADO
+  [OK] devoluções feitas no PSP: 1
+
+== 4. O estorno falha sempre: para em revisão, nunca em CANCELADO sem devolver
+  pedido pedido-1: PENDENTE -> AGUARDANDO_PAGAMENTO
+  pedido pedido-1: AGUARDANDO_PAGAMENTO -> PAGO
+  reserva expirou e a última unidade foi vendida para outra pessoa
+  pedido pedido-1: PAGO -> ESTORNANDO
+  estorno falhou (tentativa 1), tenta de novo com espera crescente
+  estorno falhou (tentativa 2), tenta de novo com espera crescente
+  estorno falhou (tentativa 3), tenta de novo com espera crescente
+  estorno falhou (tentativa 4), tenta de novo com espera crescente
+  pedido pedido-1: ESTORNANDO -> ESTORNO_EM_REVISAO
+  Meus Pedidos mostra: Devolução em análise
+  [OK] status final: ESTORNO_EM_REVISAO
+  [OK] pagamento ainda não devolvido: APROVADO
+
+== 5. Relay cai depois de publicar (mensagem duplicada no broker)
+  relay de checkout caiu depois de publicar e antes de marcar
+  pedido pedido-1: PENDENTE -> AGUARDANDO_PAGAMENTO
+  pedido pedido-1: AGUARDANDO_PAGAMENTO -> PAGO
+  reserva expirou e a última unidade foi vendida para outra pessoa
+  pedido pedido-1: PAGO -> ESTORNANDO
+  pedido pedido-1: ESTORNANDO -> CANCELADO
+  Meus Pedidos mostra: Cancelado (valor devolvido, se houve cobrança)
+  [OK] status final: CANCELADO
+  [OK] devoluções feitas no PSP: 1
+  [OK] mensagens duplicadas ignoradas > 0: true
+
+== 6. Sem estoque desde o início: nada é cobrado
+  pedido pedido-1: PENDENTE -> CANCELADO
+  Meus Pedidos mostra: Cancelado (valor devolvido, se houve cobrança)
+  [OK] status final: CANCELADO
+  [OK] pagamento: null
+
+TODOS OS CENÁRIOS PASSARAM
