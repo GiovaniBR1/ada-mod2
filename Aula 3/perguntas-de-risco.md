@@ -1,5 +1,7 @@
 # Perguntas de Risco: Aula 03 - Banco de Dados do Checkout
 
+> **Material extra:** a Aula 03 não pede perguntas de risco no template; este arquivo foi mantido como estudo e para reforçar a robustez do desenho.
+
 **Cenário.** É o mesmo checkout da Aula 2, agora na **Black Friday**. A borda aguenta o tráfego, e o gargalo passou para a **única instância do PostgreSQL**. Centenas de clientes disputam as últimas unidades do mesmo produto em promoção, e uma consulta de pedidos sem índice já esgotou o **pool de conexões com o banco** (o conjunto fixo de conexões abertas que a aplicação reaproveita), com p99 de 4,8 s (99% das requisições abaixo de 4,8 s).
 
 O que o nosso desenho (`system-design.md`) já tem, e que as respostas abaixo usam:

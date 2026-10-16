@@ -1,5 +1,7 @@
 # Perguntas de Risco: Aula 04 - Saga da Compra
 
+> **Material extra:** a Aula 04 não pede perguntas de risco no template; este arquivo foi mantido como estudo e para reforçar a robustez do desenho.
+
 **Cenário.** É o mesmo checkout das Aulas 2 e 3, agora dividido em três serviços, cada um com o seu banco PostgreSQL:
 
 - **Checkout:** dono do pedido (tabela `pedidos`) e da **Saga de Compra**, o coordenador que decide o próximo passo.
