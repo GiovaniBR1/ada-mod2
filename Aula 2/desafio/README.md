@@ -1,6 +1,6 @@
 # Desafio Aula 2 (PE-JV-003): pagamento resiliente com Spring Boot + Resilience4j
 
-Enunciado oficial: [`PE-JV-003-Aula-02-Desafio-Codigo.md`](PE-JV-003-Aula-02-Desafio-Codigo.md). Desenho da aula: [`../system-design.md`](../system-design.md) (checkout, MVC + threads virtuais, `Idempotency-Key`, `PENDENTE` + reconciliação).
+Enunciado oficial: [`PE-JV-003-Aula-02-Desafio-Codigo.md`](../Originais/PE-JV-003-Aula-02-Desafio-Codigo.md). Desenho da aula: [`../system-design.md`](../system-design.md) (checkout, MVC + threads virtuais, `Idempotency-Key`, `PENDENTE` + reconciliação).
 
 ## O que o desafio pede (em uma frase cada)
 
