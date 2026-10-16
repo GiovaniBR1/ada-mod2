@@ -156,7 +156,7 @@
   > | Risco | Onde | Mitigação |
   > |---|---|---|
   > | Excesso de `OptimisticLockException` | Pagamento (2.1) | Conflito é raro por desenho. Quem perde relê e respeita o estado; nada de retry cego. Métrica de taxa de conflitos com alerta: subiu, alguém está disputando o que não devia. |
-  > | Fila de espera no lock do produto quente | Estoque (2.2) | O lock dura só o `UPDATE` (T1 curta, sem chamada externa). `SET LOCAL lock_timeout = '2s'` na transação: quem não consegue o lock em 2 s recebe erro e responde `503` com `Retry-After`, em vez de prender conexão. Conta da vazão e da espera em 2.2 (estimativa). |
+  > | Fila de espera no lock do produto quente | Estoque (2.2) | O lock da linha dura do `UPDATE` até o **commit** da T1; por isso o `UPDATE` é o último passo da T1, que é curta e sem chamada externa (2.2). `SET LOCAL lock_timeout = '2s'` na transação: quem não consegue o lock em 2 s recebe erro e responde `503` com `Retry-After`, em vez de prender conexão. Conta da vazão e da espera em 2.2 (estimativa). |
   > | Pool de conexões com o banco esgotado (`ConnectionTimeoutException`) | Todo o banco | Com threads virtuais, threads são baratas; o limite real é o pool (Aula 02). `connectionTimeout` curto (ex.: 2 s) para falhar rápido com `503`; um **Bulkhead por produto** (o padrão da Aula 02, que lá protege o parceiro, agora antes do banco) limita quantas requisições do mesmo produto chegam ao banco ao mesmo tempo (2.2). O tamanho do pool sai do teste de carga, não de chute. |
   > | *Deadlock* | Carrinho com vários produtos | Duas compras travando produtos em ordem diferente (A→B e B→A) se esperam para sempre. O Postgres detecta (após `deadlock_timeout`, 1 s por padrão) e aborta uma com erro `40P01`. Mitigação: **reservar os produtos sempre em ordem crescente de `sku`**; o abortado repete a T1 uma vez, sem efeito colateral, porque nada foi commitado. |
   > | Unidade presa por pagamento que não fecha | Estoque | A reserva tem `expira_em`; a reconciliação da Aula 02, ao marcar `EXPIRADO`, libera a reserva (2.2, passo 3). |
@@ -194,7 +194,7 @@
 
 ## 4. Os Edge Cases (Engenharia do Caos)
 
-> Seção acrescentada para manter o padrão da Aula 02; as perguntas estão em `perguntas-de-risco.md`.
+> **Material extra:** esta seção não é pedida pelo template da Aula 03; foi mantida como estudo e para reforçar a robustez do desenho. As perguntas detalhadas estão em `perguntas-de-risco.md`.
 
 1. **E se...** a resposta atrasada do parceiro e a reconciliação fecharem o mesmo `PENDENTE` ao mesmo tempo, com resultados diferentes?
    - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada.
@@ -231,7 +231,7 @@ sequenceDiagram
 
 ## 5. Testando a Persistência
 
-> Seção acrescentada no padrão da Aula 02.
+> **Material extra:** esta seção não é pedida pelo template da Aula 03; foi mantida como estudo e para reforçar a robustez do desenho.
 
 **Ferramenta:** Testcontainers com PostgreSQL 17 de verdade. H2 ou mock do repositório não mostram lock de linha, `FOR UPDATE`, `CHECK` nem plano de execução: o mock devolve o que você mandou (PIRÂMIDE). Cada teste **nasce vermelho**: escrito antes da regra, tem de falhar sem ela (TESTE).
 
