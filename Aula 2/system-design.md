@@ -33,7 +33,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   >
   > **Fallback (FALHA: na dúvida, nega; falha nunca vira "aprovado"):**
   > - Circuito aberto, bulkhead cheio ou rate limit estourado: **sabemos que não chamamos o parceiro**. Responde `503` com `Retry-After`; o cliente pode tentar de novo com a mesma chave.
-  > - Timeout ou 500 depois de enviar: **não sabemos se cobrou**. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO` (mesma ideia do Cenário 07). O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`): evento atrasado não muda estado final (ESTADO).
+  > - Timeout ou 500 depois de enviar: **não sabemos se cobrou**. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`): evento atrasado não muda estado final (ESTADO).
   >
   > ```yaml
   > # Valores iniciais de exemplo, a calibrar com métrica real (p99 do parceiro, taxa de erro).
@@ -72,7 +72,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   >
   > Um prazo (`travado_ate`) no `EM_PROCESSAMENTO` evita chave presa se a réplica cair no meio; vencido o prazo, o pagamento já está gravado como `PENDENTE` e a reconciliação assume.
   >
-  > **Campos principais** (o modelo completo, com pedido, reserva e estoque, está na Aula 03):
+  > **Material extra (não pedido pelo template):** campos principais das tabelas, para mostrar onde moram as duas travas. O modelo completo, com pedido, reserva e estoque, está na Aula 03.
   >
   > | Tabela | Campos | Constraints |
   > |---|---|---|
