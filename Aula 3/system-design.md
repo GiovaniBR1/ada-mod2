@@ -5,8 +5,10 @@
 > Sua equipe está preparando a persistência da API de Checkout para o pico de tráfego da Black Friday:
 >
 > 1. **Armazenamento:** Transações financeiras de pedidos exigem garantias ACID rigorosas e consistência imediata, enquanto dados de catálogo e sessões de usuários demandam alta vazão de leitura e tolerância a partição.
-> 2. **Concorrência:** A atualização de status do pedido tem baixa disputa por registro (apenas o comprador interage), mas a **reserva de estoque** sofre altíssima contenção com centenas de clientes disputando as últimas unidades do mesmo produto em promoção.
-> 3. **Incidente em Produção:** Em testes de carga, o tempo de resposta p99 subiu para 4.8s e o pool de conexões com o banco saturou devido a consultas lentas de pedidos (`WHERE customer_id = ?` e `WHERE order_status = 'processing'`).
+> 2. **Concorrência:** A atualização de status do pedido tem baixa disputa por registro (apenas o comprador interage), mas a **reserva de estoque** sofre altíssima contenção com centenas de clientes disputando as últimas unidades do mesmo SKU promocional.
+> 3. **Incidente em Produção:** Em testes de carga, o tempo de resposta p99 subiu para 4.8s e o pool HikariCP saturou devido a consultas lentas de pedidos (`WHERE customer_id = ?` e `WHERE order_status = 'processing'`).
+>
+> **Instruções:** Responda às decisões arquiteturais abaixo fundamentando suas escolhas estritamente com base nos requisitos e restrições deste cenário. Adicione este bloco ao repositório contínuo do seu projeto.
 >
 > **Continuidade com a Aula 02.** É o mesmo checkout da Aula 2. Nenhuma decisão da Aula 02 muda; aqui entra só a camada de dados. Stack: Spring Data JPA (Hibernate 6), PostgreSQL 17, Flyway, pool de conexões com o banco.
 
@@ -17,7 +19,7 @@
 ### 1.1 Motor de Banco de Dados e Paradigma de Persistência
 
 - **A Escolha para o Checkout:** ( ) Relacional Puro (PostgreSQL) (X) Persistência Poliglota / Híbrida
-- **Justificativa Arquitetural:**
+- **Justificativa Arquitetural:** Avalie o Teorema CAP e o modelo de consistência (ACID vs BASE). Por que a sua escolha atende aos requisitos do Checkout sem comprometer a integridade financeira?
   > **O núcleo do Checkout é PostgreSQL, sem negociação.** Uma compra mexe em quatro coisas que precisam dar certo juntas ou não acontecer: a chave de idempotência, a reserva do estoque, o pedido e o pagamento. Isso é uma transação ACID: atomicidade (não existe reserva sem pedido), consistência (`CHECK (disponivel >= 0)` e `UNIQUE` valem sempre), isolamento (duas compras do mesmo produto não se atropelam) e durabilidade (o `201` só sai depois do commit).
   >
   > **CAP.** Numa partição de rede, para dinheiro e estoque escolhemos **C** (consistência): é melhor responder `503` do que vender a mesma unidade duas vezes ou mostrar "pago" sem pagamento (FALHA: na dúvida, nega). É a mesma regra da Aula 02, agora no banco.
@@ -35,7 +37,7 @@
   >
   > **O que foi descartado:** colocar pedidos num banco documental "para escalar". O gargalo do incidente é falta de índice e de controle de concorrência, não o modelo relacional. O mais simples que atende primeiro (CANO): índices, transações curtas, réplica de leitura. *Sharding* só quando a dor for real (CORTE).
 
-- **Além do Modelo Documental (Ecossistema NoSQL):**
+- **Além do Modelo Documental (Ecossistema NoSQL):** A persistência poliglota vai muito além da dicotomia "Relacional vs MongoDB". Considerando as necessidades complementares de uma plataforma de e-commerce (como carrinhos efêmeros, busca textual de produtos, telemetria/logs, auditoria temporal ou análise de conexões/fraude), cite e comente pelo menos outros dois tipos/famílias de bancos NoSQL que poderiam coexistir na arquitetura, indicando para quais casos de uso específicos cada um seria a ferramenta ideal e por quê.
   > Cada família entra porque uma dor pede (DOR), nunca no caminho do dinheiro:
   >
   > | Família | Exemplo | Caso de uso | Por quê |
@@ -50,7 +52,7 @@
 ### 1.2 Estratégia da Chave Primária
 
 - **A Escolha:** ( ) Sequence / Identity ( ) UUIDv4 (X) UUIDv7 / TSID
-- **Impacto no Armazenamento:**
+- **Impacto no Armazenamento:** Por que essa estratégia foi escolhida considerando inserções concorrentes e o impacto de fragmentação na árvore B-Tree (page splits)?
   > **Por que não Sequence/Identity.** O auto-incremento depende de um contador central no banco: o ID só existe depois do `INSERT`, então não dá para gerar o ID do pedido antes (para mandar ao parceiro como referência) nem em vários bancos sem coordenação. No Hibernate, `GenerationType.IDENTITY` ainda **desliga o JDBC batch insert**, porque o Hibernate precisa executar cada `INSERT` na hora para saber o ID. (`SEQUENCE` com `allocationSize = 50` resolveria o batch, mas continua um contador central.)
   >
   > **Por que não UUIDv4.** O v4 é 100% aleatório. Cada `INSERT` cai num lugar qualquer da B-Tree da PK: páginas no meio do índice enchem e se dividem (*page splits*), o índice fica fragmentado e o cache sofre, porque a "página quente" é o índice inteiro. Medimos isso no laboratório (pasta `desafio/`): 300 mil linhas com PK aleatória (md5, equivalente ao v4) geraram um índice de **22 MB com 70% de densidade nas folhas** e levaram 1,3 s; com bigint sequencial, **6,6 MB, 90% de densidade**, 0,5 s. (Parte do tamanho vem do texto de 32 caracteres; um `uuid` nativo ocupa 16 bytes.)
@@ -64,6 +66,9 @@
   > **A `Idempotency-Key` da Aula 02 não muda.** Ela é gerada pelo cliente (UUID qualquer) e é uma coluna `UNIQUE`, não a PK; o índice dela recebe inserções aleatórias, custo aceito porque a tabela é pequena (TTL de 24 h, linhas antigas apagadas).
 
 ### 1.3 Modelo de Dados (campos principais)
+
+> **Material extra:** esta subseção não é pedida pelo template da Aula 03; foi mantida para mostrar onde moram as travas usadas nas seções 1.2 e 2.
+
 
 - **Tabelas da compra:**
   > Só o que a compra precisa. IDs são `uuid` v7 gerados no Java (1.2); dinheiro é `numeric(12,2)`, nunca `float`; datas são `timestamptz`; status são `text` com `CHECK` na lista de valores (legível no `psql` e mapeado com `@Enumerated(EnumType.STRING)`).
@@ -90,7 +95,7 @@
 ### 2.1 Mudança de Status do Pagamento (Baixa contenção por registro)
 
 - **Abordagem de Lock:** (X) Lock Otimista (`@Version`) ou ( ) Lock Pessimista (`SELECT FOR UPDATE`)?
-- **Justificativa:**
+- **Justificativa:** Por que essa abordagem é a mais adequada para este cenário específico?
   > Um pagamento quase nunca é disputado: no caso comum, só a própria requisição o fecha. Prender a linha com `FOR UPDATE` em toda mudança seria pagar fila por um conflito raro. Com `@Version`, o Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Se outra transação mudou a linha antes, 0 linhas são afetadas e o Hibernate lança `OptimisticLockException` (no Spring, `ObjectOptimisticLockingFailureException`).
   >
   > **O conflito raro existe, e é o da Aula 02:** resposta tardia do parceiro e job de reconciliação fechando o mesmo `PENDENTE`. Quem perder a corrida **não tenta de novo às cegas**: relê o pagamento; se já saiu de `PENDENTE`, não faz nada (evento atrasado só muda o que o estado atual ainda permite: ESTADO). A transição também é guardada pela regra no próprio `UPDATE` (`... AND status = 'PENDENTE'`), então mesmo um caminho sem JPA não reabre um pagamento fechado.
@@ -112,7 +117,7 @@
 ### 2.2 Controle de Estoque Concorrente (Alta contenção no mesmo registro)
 
 - **Abordagem de Lock:** ( ) Lock Otimista (`@Version`) ou (X) Lock Pessimista (`SELECT FOR UPDATE`)?
-- **Justificativa:**
+- **Justificativa:** Centenas de usuários disputando os últimos itens na Black Friday. Como você garante que o saldo nunca fique negativo sem derrubar o banco?
   > Com centenas de clientes no mesmo produto, o otimista vira uma tempestade de falhas: quase todos leem a mesma versão, um vence e o resto recebe `OptimisticLockException`, tenta de novo e perde de novo. Gasta CPU e conexão e frustra o cliente que ainda tinha unidade para comprar.
   >
   > **Implementação: um `UPDATE` atômico e condicional.** Ele trava a linha do produto, e no Postgres o lock de linha só é solto no **commit** da transação. Por isso esse `UPDATE` é o **último comando da T1**, logo antes do commit:
@@ -152,7 +157,7 @@
 
 ### 2.3 Riscos e Mitigações
 
-- **Análise Crítica:**
+- **Análise Crítica:** Quais os riscos operacionais das abordagens de lock que você escolheu (ex: excesso de `OptimisticLockException` frustrando o cliente vs `ConnectionTimeoutException` e *deadlocks* enfileirando threads no Lock Pessimista)? Como sua arquitetura mitiga esses riscos?
   > | Risco | Onde | Mitigação |
   > |---|---|---|
   > | Excesso de `OptimisticLockException` | Pagamento (2.1) | Conflito é raro por desenho. Quem perde relê e respeita o estado; nada de retry cego. Métrica de taxa de conflitos com alerta: subiu, alguém está disputando o que não devia. |
@@ -169,7 +174,8 @@
 
 ### 3.1 Investigação de Incidente em Produção
 
-- **Plano de Diagnóstico:**
+- **Cenário:** Em testes de carga para a Black Friday, o tempo de resposta p99 do Checkout subiu repentinamente para 4.8s e o pool de conexões (HikariCP) saturou. Os logs apontam que a consulta de pedidos mais frequente (`WHERE customer_id = ? AND order_status = 'processing'`) está demorando segundos para responder.
+- **Plano de Diagnóstico:** Qual é o seu processo técnico passo a passo para investigar a causa raiz dessa lentidão diretamente no banco de dados? Quais comandos, métricas ou planos você analisaria para comprovar a hipótese antes de propor qualquer mudança?
   > Primeiro provar, depois mexer. Nenhum índice entra sem plano antes e depois.
   >
   > 1. **Confirmar o sintoma na aplicação.** Métricas do pool de conexões com o banco (`hikaricp.connections.active`, `.pending`, `.usage`): o pool está cheio porque cada conexão fica presa muito tempo, não porque faltam conexões. Aumentar o pool só jogaria mais carga num banco a 100% de CPU.
@@ -181,7 +187,8 @@
 
 ### 3.2 Decisão de Engenharia: A Abordagem de Índices
 
-- **Seu Posicionamento:**
+- **Dilema no Pull Request:** Para solucionar a lentidão, um desenvolvedor da equipe abriu um PR criando índices individuais para todas as colunas da tabela de pedidos que aparecem em filtros de consulta.
+- **Seu Posicionamento:** Como responsável técnico, você aprovaria esse PR? Qual é a sua avaliação crítica sobre essa estratégia e quais impactos colaterais sistêmicos devem ser ponderados antes de aprovar novos índices?
   > **Não aprovo o PR.** Índice não é de graça e um por coluna nem resolve a consulta.
   >
   > - **Não resolve:** a consulta é `WHERE customer_id = ? AND order_status = 'processing'`. Dois índices separados obrigam o banco a escolher um e filtrar o resto, ou a combinar os dois (*BitmapAnd*). O certo é **um índice composto** na ordem do uso: `(customer_id, order_status)`, igualdade mais seletiva primeiro. Se a tela ordena por data, `(customer_id, order_status, criado_em DESC)` também elimina o `Sort`.
@@ -201,7 +208,7 @@
 2. **E se...** o pagamento for recusado ou expirar depois que a última unidade já foi reservada?
    - **Resposta do Sistema:** a T2 fecha o pagamento como `RECUSADO`/`EXPIRADO` e, **na mesma transação**, faz `UPDATE reserva SET status = 'LIBERADA' WHERE id = ? AND status = 'ATIVA'` e devolve a unidade só se essa linha mudou. Se a aplicação cair antes, a reserva vence (`expira_em`) e a reconciliação faz o mesmo. Liberar duas vezes é impossível: a segunda tentativa encontra `LIBERADA` e afeta 0 linhas.
 3. **E se...** a migration do índice novo travar as gravações durante o pico?
-   - **Resposta do Sistema:** `CREATE INDEX` comum pega um lock que bloqueia escritas na tabela. Usamos `CREATE INDEX CONCURRENTLY`, que não bloqueia `INSERT`/`UPDATE` (é mais lento e varre a tabela duas vezes). Ele não roda dentro de transação, então no Flyway a migration fica marcada como não transacional (`executeInTransaction=false` no script). Se falhar no meio, sobra um índice `INVALID`: o deploy confere `pg_index.indisvalid` e, se preciso, faz `DROP INDEX CONCURRENTLY` e cria de novo. E a migration roda **antes** da janela da Black Friday, nunca no pico.
+   - **Resposta do Sistema:** `CREATE INDEX` comum pega um lock que bloqueia escritas na tabela. Usamos `CREATE INDEX CONCURRENTLY`, que não bloqueia `INSERT`/`UPDATE` (é mais lento e varre a tabela duas vezes). Ele não roda dentro de transação, então no Flyway a migration fica marcada como não transacional (arquivo de configuração ao lado do script, ex.: `V7__indice_pedidos.sql.conf` com `executeInTransaction=false`). Se falhar no meio, sobra um índice `INVALID`: o deploy confere `pg_index.indisvalid` e, se preciso, faz `DROP INDEX CONCURRENTLY` e cria de novo. E a migration roda **antes** da janela da Black Friday, nunca no pico.
 
 ```mermaid
 sequenceDiagram
