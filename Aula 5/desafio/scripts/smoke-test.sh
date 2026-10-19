@@ -19,8 +19,11 @@ done
 [ "$code" = "200" ] || { echo "FALHA: readiness=$code"; docker logs "$NAME"; exit 1; }
 echo "ok: readiness 200"
 
-# 3. Requisicao de negocio de ponta a ponta (dado do seed V2, ja migrado pelo V4).
-curl -fsS http://localhost:18080/pedidos/3 | grep -q CANCELADO_COM_ESTORNO && echo "ok: pedido 3 migrado"
+# 3. Requisicao de negocio: a rota responde e consulta o banco ja migrado (V1, V3, V4).
+#    A imagem nao leva dados de exemplo, entao um pedido inexistente deve dar 404 (e nao 500).
+code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/pedidos/999)
+[ "$code" = "404" ] || { echo "FALHA: /pedidos/999 respondeu $code"; docker logs "$NAME"; exit 1; }
+echo "ok: rota de pedidos responde 404 para pedido inexistente"
 
 # 4. Verificacoes negativas da imagem.
 if docker run --rm --entrypoint sh "$IMG" -c true >/dev/null 2>&1; then

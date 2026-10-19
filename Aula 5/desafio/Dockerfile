@@ -9,8 +9,10 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 mvn -B -q package -DskipTests \
     && java -Djarmode=tools -jar target/checkout-release-*.jar extract --layers --launcher --destination /layers
 
-# Estagio 2: runtime. Só a JRE 21 distroless, sem shell, sem apt, sem root.
-FROM gcr.io/distroless/java21-debian12:nonroot
+# Estagio 2: runtime. Só a JRE 21 distroless (Debian 13), sem shell, sem apt, sem root.
+# Fixada por digest: o mesmo Dockerfile sempre usa a mesma base (build reprodutivel).
+# A esteira confere a assinatura da base antes do build (cosign verify, ver ci.yml).
+FROM gcr.io/distroless/java21-debian13:nonroot@sha256:f3ac871fb5802c2739bb23b67212e67f341cbe754131528d2e9849072f9efb9a
 WORKDIR /app
 COPY --from=builder --chown=65532:65532 /layers/dependencies/ ./
 COPY --from=builder --chown=65532:65532 /layers/spring-boot-loader/ ./

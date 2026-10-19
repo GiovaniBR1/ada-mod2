@@ -1,3 +1,4 @@
+-- So para testes (src/test/resources): o Spring Boot nao empacota este arquivo no jar nem na imagem.
 -- Dados de exemplo cobrindo os casos ambiguos do CANCELADO antigo.
 INSERT INTO pedido VALUES (1, 10000, 'CONFIRMADO');
 INSERT INTO pedido VALUES (2, 5000,  'CANCELADO');   -- nada cobrado

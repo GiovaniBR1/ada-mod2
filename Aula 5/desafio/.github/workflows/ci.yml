@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do codigo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configurar JDK 21 (Temurin com cache Maven)
         uses: actions/setup-java@v4
@@ -29,7 +29,7 @@ jobs:
           cache: 'maven'
 
       - name: Compilar e executar testes (migracoes, coexistencia v1/v2, checksum, guardrail)
-        run: mvn -B verify
+        run: mvn -B --update-snapshots verify
 
       - name: Gerar SBOM das dependencias (CycloneDX)
         run: mvn -B cyclonedx:makeAggregateBom
@@ -40,6 +40,13 @@ jobs:
           name: sbom
           path: "Aula 5/desafio/target/bom.json"
 
+      - name: Conferir a assinatura da imagem base distroless (cosign, keyless)
+        uses: sigstore/cosign-installer@v3
+      - run: >
+          cosign verify gcr.io/distroless/java21-debian13:nonroot
+          --certificate-oidc-issuer https://accounts.google.com
+          --certificate-identity keyless@distroless.iam.gserviceaccount.com
+
       - name: Construir imagem multi-stage (tag com o sha do commit)
         run: docker build -t checkout:${{ github.sha }} .
 
@@ -47,7 +54,7 @@ jobs:
         run: bash scripts/smoke-test.sh checkout:${{ github.sha }}
 
       - name: Auditoria de vulnerabilidades (Trivy, falha em CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'checkout:${{ github.sha }}'
           format: 'table'
@@ -55,3 +62,27 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL'
+
+      - name: Auditoria da configuracao da imagem (usuario root, segredo em ENV)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'checkout:${{ github.sha }}'
+          scanners: 'misconfig'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          skip-setup-trivy: true
+        env:
+          TRIVY_IMAGE_CONFIG_SCANNERS: 'misconfig,secret'
+
+      - name: SBOM da imagem inteira (sistema + JRE + jars), anexado a execucao
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: 'checkout:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'sbom-image.cdx.json'
+          skip-setup-trivy: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-image
+          path: sbom-image.cdx.json
