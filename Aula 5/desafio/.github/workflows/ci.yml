@@ -1,0 +1,57 @@
+# Workflow da Aula 5. O GitHub so executa workflows em .github/workflows/ na RAIZ do repo;
+# para ativar, copie este arquivo para lá (o working-directory já aponta para "Aula 5/desafio").
+name: CI Checkout Aula 5
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ "Aula 5/desafio/**" ]
+  pull_request:
+    branches: [ main ]
+    paths: [ "Aula 5/desafio/**" ]
+
+defaults:
+  run:
+    working-directory: "Aula 5/desafio"
+
+jobs:
+  build-and-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Temurin com cache Maven)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Compilar e executar testes (migracoes, coexistencia v1/v2, checksum, guardrail)
+        run: mvn -B verify
+
+      - name: Gerar SBOM das dependencias (CycloneDX)
+        run: mvn -B cyclonedx:makeAggregateBom
+
+      - name: Publicar SBOM como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: "Aula 5/desafio/target/bom.json"
+
+      - name: Construir imagem multi-stage (tag com o sha do commit)
+        run: docker build -t checkout:${{ github.sha }} .
+
+      - name: Smoke test da imagem (readiness, sem shell, nao-root)
+        run: bash scripts/smoke-test.sh checkout:${{ github.sha }}
+
+      - name: Auditoria de vulnerabilidades (Trivy, falha em CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: 'checkout:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL'
