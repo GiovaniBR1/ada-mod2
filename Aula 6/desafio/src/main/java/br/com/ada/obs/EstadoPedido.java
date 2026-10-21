@@ -1,0 +1,35 @@
+package br.com.ada.obs;
+
+/** Estados do pedido. Cancelar sem cobranca e cancelar com estorno sao estados diferentes. */
+public enum EstadoPedido {
+    RECEBIDO(false),
+    ESTOQUE_EM_VERIFICACAO(false),
+    AGUARDANDO_PIX(false),
+    PAGAMENTO_EM_VERIFICACAO(false),
+    CONFIRMACAO_EM_VERIFICACAO(false),
+    ESTORNO_EM_REVISAO(false),
+    /** Prazo de revisao esgotado. O job continua consultando o PSP uma vez por dia. */
+    ESTORNO_FALHOU(false),
+    CONFIRMADO(true),
+    CANCELADO_SEM_COBRANCA(true),
+    CANCELADO_COM_ESTORNO(true);
+
+    private final boolean terminalParaCliente;
+
+    EstadoPedido(boolean terminalParaCliente) {
+        this.terminalParaCliente = terminalParaCliente;
+    }
+
+    /** O cliente ja recebeu um desfecho. ESTORNO_FALHOU ainda espera o job diario. */
+    public boolean terminalParaCliente() {
+        return terminalParaCliente;
+    }
+
+    public boolean emRevisao() {
+        return this == ESTOQUE_EM_VERIFICACAO
+                || this == PAGAMENTO_EM_VERIFICACAO
+                || this == CONFIRMACAO_EM_VERIFICACAO
+                || this == ESTORNO_EM_REVISAO
+                || this == ESTORNO_FALHOU;
+    }
+}
