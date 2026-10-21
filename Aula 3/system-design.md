@@ -116,7 +116,7 @@
 
 ### 2.2 Controle de Estoque Concorrente (Alta contenção no mesmo registro)
 
-- **Abordagem de Lock:** ( ) Lock Otimista (`@Version`) ou (X) Lock Pessimista (`SELECT FOR UPDATE`)?
+- **Abordagem de Lock:** ( ) Lock Otimista (`@Version`) ou (X) Lock pessimista pelo `UPDATE` condicional, não por `SELECT FOR UPDATE`?
 - **Justificativa:** Centenas de usuários disputando os últimos itens na Black Friday. Como você garante que o saldo nunca fique negativo sem derrubar o banco?
   > Com centenas de clientes no mesmo produto, o otimista vira uma tempestade de falhas: quase todos leem a mesma versão, um vence e o resto recebe `OptimisticLockException`, tenta de novo e perde de novo. Gasta CPU e conexão e frustra o cliente que ainda tinha unidade para comprar.
   >
@@ -150,6 +150,7 @@
   > - A fila anda a 250/s: o último esperaria 5.000 ÷ 250 = **20 s**. Mais conexões **não** aceleram nada (a linha é uma só); só aumentam a espera.
   > - O `lock_timeout = '2s'` corta antes: só as primeiras ~250 × 2 = **500** posições da fila pegam o lock; o resto espera 2 s e recebe `503`. Mas cada um ficou **2 s segurando uma conexão**: com um pool de, por exemplo, 50 conexões, a fila de **um** produto ocupa o pool inteiro e trava a compra de **todos** os outros.
   > - **Por isso há um limite antes do banco:** um **Bulkhead por produto** (semáforo do Resilience4j, o mesmo padrão da Aula 02, uma instância por `sku`, envolvendo a T1 inteira), com poucas vagas (ex.: 8 por réplica) e `max-wait-duration` curto (ex.: 50 ms). Quem não pega vaga recebe `503` + `Retry-After` **sem abrir conexão** e sem gravar a chave; o cliente repete com a mesma `Idempotency-Key`.
+  > - **Ciclo de vida do semáforo.** Ele nasce na primeira requisição daquele SKU (mapa em memória, criação preguiçosa) e não vive para sempre: SKU sem chamada por 15 min sai do mapa, para o catálogo inteiro não virar uma lista de semáforos. Há um teto de 1.000 semáforos vivos. O SKU que passaria do teto entra num semáforo compartilhado `outros`, com as mesmas 8 vagas, em vez de criar o 1.001º. Réplica que sobe começa com o mapa vazio. Réplica que desce leva os semáforos junto, porque eles são memória local, não estado do pedido. Os 15 min e o teto de 1.000 são decisão de folga (maiores que a espera de 50 ms, menores que uma promoção inteira), a calibrar no teste de carga.
   > - **Espera com o Bulkhead:** 4 réplicas × 8 vagas = 32 na fila da linha → espera máxima ≈ 32 × 4 ms ≈ **130 ms**, bem abaixo dos 2 s. O produto quente usa no máximo 8 conexões por réplica; o resto do pool fica para os outros produtos. O `lock_timeout` vira rede de segurança, não o controle do dia a dia.
   > - **Quando o estoque acaba**, o `UPDATE` não acha mais `disponivel >= :qtd` e responde `409` na hora: a fila some sozinha (ex.: 100 unidades a 250/s acabam em ~0,4 s).
   >
@@ -183,7 +184,34 @@
   > 3. **Achar a consulta que mais pesa.** `pg_stat_statements` ordenado por `total_exec_time` (o que mais consome no total) e por `mean_exec_time` (a mais lenta por chamada). A consulta de pedidos por cliente e status aparece no topo pelas duas.
   > 4. **Ler o plano real.** `EXPLAIN (ANALYZE, BUFFERS)` com valores reais. Procuramos `Seq Scan` em `pedidos`, "Rows Removed by Filter" enorme comparado às linhas devolvidas, e muitos `Buffers` lidos. Colamos a saída no explain.dalibo.com para ver o nó mais caro. **Atenção:** `EXPLAIN ANALYZE` **executa** o comando; para `UPDATE`/`DELETE`, só dentro de `BEGIN; ... ROLLBACK;`.
   > 5. **Conferir as estatísticas.** Se o planejador estima 10 linhas e vêm 50 mil, rodar `ANALYZE pedidos` antes de culpar o índice.
-  > 6. **Hipótese e prova.** Criar o índice num ambiente com volume de produção, repetir o mesmo `EXPLAIN` e a mesma carga, e comparar p99, pool e buffers. No laboratório, o filtro por cliente caiu de 6,5 ms (`Seq Scan`, 1.539 buffers) para 0,06 ms (`Index Scan`, 11 buffers).
+  > 6. **Hipótese e prova.** Criar o índice num ambiente com volume de produção, repetir o mesmo `EXPLAIN` e a mesma carga, e comparar p99, pool e buffers.
+  >
+  > O laboratório (`desafio/README.md`, `saida-execucao.txt`) mediu **outra** consulta: `SELECT * FROM olist_orders WHERE customer_id = ?`, sem `order_status`. Antes: `Seq Scan`, 1.539 buffers, 6,5 ms, cerca de 100 mil linhas removidas pelo filtro. Depois de `CREATE INDEX idx_orders_customer ON olist_orders (customer_id)`: `Bitmap Heap Scan` com `Bitmap Index Scan` em `idx_orders_customer`, 11 buffers, 0,06 ms. Isso prova o filtro por cliente. Não é a consulta do incidente, e o plano não é um `Index Scan` puro.
+  >
+  > A consulta do incidente é `WHERE customer_id = ? AND order_status = 'processing'`. O índice é o composto `(customer_id, order_status)`. O laboratório Olist não rodou essa consulta. A medição abaixo é outra: PostgreSQL 16, tabela `pedidos` sintética com 200.000 linhas, um cliente com poucos pedidos `processing`. Serve para anexar o plano, não para substituir o 6,5 ms.
+  >
+  > Antes, sem o índice (`Parallel Seq Scan`, 2.062 buffers, 7,5 ms, ~100 mil linhas removidas pelo filtro em cada worker):
+  >
+  > ```text
+  > Gather  (actual time=0.174..7.530 rows=5 loops=1)
+  >   Buffers: shared hit=2062
+  >   -> Parallel Seq Scan on pedidos  (actual time=1.271..4.388 rows=2 loops=2)
+  >        Filter: ((customer_id = '…9f02'::uuid) AND (order_status = 'processing'::text))
+  >        Rows Removed by Filter: 99998
+  >        Buffers: shared hit=2062
+  > Execution Time: 7.548 ms
+  > ```
+  >
+  > Depois de `CREATE INDEX idx_pedidos_cliente_status ON pedidos (customer_id, order_status)` (`Index Scan`, as duas colunas no `Index Cond`, 8 buffers, 0,036 ms):
+  >
+  > ```text
+  > Index Scan using idx_pedidos_cliente_status on pedidos  (actual time=0.022..0.026 rows=5 loops=1)
+  >   Index Cond: ((customer_id = '…9f02'::uuid) AND (order_status = 'processing'::text))
+  >   Buffers: shared hit=5 read=3
+  > Execution Time: 0.036 ms
+  > ```
+  >
+  > O plano que vale como prova do incidente tem de ser este segundo: índice composto, `Index Cond` nas duas colunas, sem `Seq Scan` em `pedidos`. O 6,5 ms → 0,06 ms fica só na consulta por `customer_id` do laboratório.
 
 ### 3.2 Decisão de Engenharia: A Abordagem de Índices
 
@@ -204,7 +232,7 @@
 > **Material extra:** esta seção não é pedida pelo template da Aula 03; foi mantida como estudo e para reforçar a robustez do desenho. As perguntas detalhadas estão em `perguntas-de-risco.md`.
 
 1. **E se...** a resposta atrasada do parceiro e a reconciliação fecharem o mesmo `PENDENTE` ao mesmo tempo, com resultados diferentes?
-   - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada.
+   - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada. Se o vencedor foi `EXPIRADO` e o dinheiro tinha entrado, a linha do pagamento não reabre; a saga (apêndice da Aula 4) pede o estorno.
 2. **E se...** o pagamento for recusado ou expirar depois que a última unidade já foi reservada?
    - **Resposta do Sistema:** a T2 fecha o pagamento como `RECUSADO`/`EXPIRADO` e, **na mesma transação**, faz `UPDATE reserva SET status = 'LIBERADA' WHERE id = ? AND status = 'ATIVA'` e devolve a unidade só se essa linha mudou. Se a aplicação cair antes, a reserva vence (`expira_em`) e a reconciliação faz o mesmo. Liberar duas vezes é impossível: a segunda tentativa encontra `LIBERADA` e afeta 0 linhas.
 3. **E se...** a migration do índice novo travar as gravações durante o pico?

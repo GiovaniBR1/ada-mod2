@@ -42,19 +42,19 @@
   > | `cliente_ref` | Um apelido do cliente, 12 hex, para agrupar os pedidos da mesma pessoa. O CPF não entra na linha. A seção de LGPD diz como esse apelido é calculado e quem pode revertê-lo. |
   > | `msg` | A frase curta do que aconteceu. Quando a resposta não chega, a frase é fixa: "consultando status antes de decidir". O teste procura essa frase e o `trace_id` na mesma linha. |
   >
-  > O `estado` separa situações que a tela e o financeiro leem de jeitos diferentes. Um único `CANCELADO` esconderia se o dinheiro se moveu.
+  > O `estado` do log é o estado do pedido do [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md). Um único `CANCELADO` esconderia se o dinheiro se moveu, e foi por isso que ele saiu de cena. Não há uma terceira máquina: `AGUARDANDO_PIX` e `CONFIRMADO`, que o laboratório ainda grava, são sinônimos de `AGUARDANDO_PAGAMENTO` e `CONCLUIDO`.
   >
   > | Estado | O que aconteceu com o dinheiro e com o estoque |
   > | :--- | :--- |
-  > | `CONFIRMADO` | Estoque reservado e pagamento capturado. Os dois precisam ser verdade ao mesmo tempo. |
+  > | `CONCLUIDO` | Estoque reservado e pagamento capturado. Os dois precisam ser verdade ao mesmo tempo. No laboratório o assert usa `CONFIRMADO`. |
   > | `CANCELADO_SEM_COBRANCA` | Nada foi capturado. Acontece quando não há saldo, quando o PSP recusa, ou quando o teto de pendente estoura. |
   > | `CANCELADO_COM_ESTORNO` | O pagamento tinha sido capturado e o PSP confirmou o estorno. |
-  > | `AGUARDANDO_PIX` | O Pix foi gerado e ainda não foi pago. O valor entra no teto de pendente. |
+  > | `AGUARDANDO_PAGAMENTO` | O Pix foi gerado e ainda não foi pago. O valor entra no teto de pendente. No laboratório o assert usa `AGUARDANDO_PIX`. |
   > | `ESTOQUE_EM_VERIFICACAO` | O Estoque não respondeu e a consulta do status também não fechou. Não cobramos. |
   > | `PAGAMENTO_EM_VERIFICACAO` | O PSP não respondeu e a consulta não fechou. Não estornamos e não liberamos o estoque, porque a cobrança pode ter acontecido. |
   > | `CONFIRMACAO_EM_VERIFICACAO` | O pagamento já foi capturado e a confirmação do estoque não respondeu. Não estornamos enquanto o status do estoque for desconhecido. |
-  > | `ESTORNO_EM_REVISAO` | Pedimos o estorno, ou ele foi recusado por enquanto, e o PSP ainda não confirmou. |
-  > | `ESTORNO_FALHOU` | Passaram 24 h em revisão (**decisão** de prazo). Abre alerta para o financeiro. O job continua consultando o PSP no dia seguinte. |
+  > | `ESTORNO_EM_REVISAO` | As cinco tentativas da Aula 4 acabaram sem confirmação do PSP. O chamado abre aqui. |
+  > | `ESTORNO_FALHOU` | 24 h em `ESTORNO_EM_REVISAO` sem confirmação. O chamado continua. O job consulta o PSP no dia seguinte e ainda pode fechar em `CANCELADO_COM_ESTORNO`, sem segunda devolução. As 24 h não substituem as cinco tentativas: elas abrem a revisão; o prazo impede que a revisão não tenha fim. |
   >
   > Esses estados de revisão têm saída automática. Um job consulta o status real no participante (o PSP para pagamento e estorno, o Estoque para a reserva) e só então muda o estado. "A equipe vai olhar" não é saída: no pico, a equipe está apagando o incidente. O teste `apos24hSemEstornoAbreAlertaENoDiaSeguinteAConsultaAindaFecha` deixa o pedido 25 h em revisão, vê o alerta, e na consulta do dia seguinte, com o PSP respondendo "estornado", o pedido vai para `CANCELADO_COM_ESTORNO` sem uma segunda chamada de estorno.
   >
@@ -91,7 +91,7 @@
   >
   > O evento também precisa de uma chave de partição, e a chave é o `orderId`. O Kafka só garante a ordem dentro de uma partição, e a mesma chave cai sempre na mesma partição. Assim, "reservar", "pagar" e "confirmar" do pedido 48213 são lidos em ordem, por um consumidor de cada vez. A chave `skuId` faria o contrário na Black Friday: os 2.000 pedidos do produto `FONE-BF` cairiam todos na mesma partição, e as outras 11 ficariam ociosas. O teste `chaveSkuCaiNumaParticaoSoEOrderIdEspalha` usa 12 partições (**decisão** do projeto) e mostra exatamente isso: `FONE-BF` ocupa 1 partição, e 2.000 `orderId` diferentes ocupam mais de 6. `clienteId` juntaria pedidos diferentes da mesma pessoa e ainda concentraria um comprador grande. `traceId` separaria os eventos do mesmo pedido se uma retentativa abrisse outro trace.
   >
-  > Um evento atrasado ou repetido não desfaz o estado. A mudança só ocorre se o estado atual ainda é o esperado (`UPDATE ... WHERE estado = 'AGUARDANDO_PIX'`). O teste `semSaldoCancelaSemCobrancaENaoConfirma` manda `PagamentoConfirmado` depois do cancelamento sem cobrança: o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
+  > Um evento atrasado ou repetido não desfaz o estado. A mudança só ocorre se o estado atual ainda é o esperado (`UPDATE ... WHERE estado = 'AGUARDANDO_PAGAMENTO'`; no laboratório o valor gravado ainda é `AGUARDANDO_PIX`). O teste `semSaldoCancelaSemCobrancaENaoConfirma` manda `PagamentoConfirmado` depois do cancelamento sem cobrança: o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
   >
   > O webhook do PSP é o caso em que o identificador chega de fora e não traz o nosso `traceparent`. O PSP não conhece o nosso trace. Na hora de criar o pagamento gravamos `pagamentoId = "pag-" + orderId` e o `trace_id` no pedido. O webhook manda `pag-48213|48213|PAGO`, nós achamos o pedido e a linha nova reusa o `trace_id` original. A assinatura é HMAC-SHA256 do corpo exato, no cabeçalho `X-Assinatura`. Assinatura errada responde 401 e não muda o estado. O mesmo `pagamentoId` na segunda vez responde "repetido" e não confirma o estoque de novo. Os dois casos estão em `webhookPagoConfirmaUmaVezEAssinaturaErradaNaoMudaNada`.
 - **LGPD nos Logs:** Quais dados de cliente ficam fora de logs e traces? Para os identificadores que precisam aparecer, qual tratamento você aplica e quem pode ler esses registros?
@@ -148,7 +148,7 @@
   >
   > Tem um segundo jeito de a média continuar em 120 ms, e ele combina com o botão que fica carregando até o aplicativo desistir. A chamada que ainda não terminou não entra na soma. Se 4.900 chamadas/s terminam em 120 ms e 100 chamadas/s seguem abertas, a média das que terminaram é 120 ms, o HTTP 500 é zero e a CPU fica baixa, porque a thread está parada esperando o socket, não calculando.
   >
-  > A lei de Little diz que a quantidade em andamento é a vazão vezes o tempo parado. A base saudável é 4.900 × 0,120 s = **588** chamadas abertas. As 100 que o aplicativo segura por 8 s (8 s é **estimativa**: o enunciado diz que o aplicativo desiste por timeout e não diz quantos segundos) somam 100 × 8 = **800**. Total = **1.388**. O dobro da base é 1.176. 1.388 passa de 1.176, então o alerta de "em andamento" dispara, e o alerta da média não. O teste `requisicoesAindaEmAndamentoNaoEntramNaMedia` usa esses inteiros. O medidor no ar é `checkout_http_em_andamento`. O projeto também publica `checkout_pedidos_em_aberto`, que conta pedido fora de `CONFIRMADO`, `CANCELADO_SEM_COBRANCA` e `CANCELADO_COM_ESTORNO`. Esse segundo medidor pega o caso em que o HTTP respondeu 202 em 120 ms e a saga ficou parada: a média HTTP é honestamente 120 ms, e o pedido continua em `AGUARDANDO_PIX` ou num estado de verificação.
+  > A lei de Little diz que a quantidade em andamento é a vazão vezes o tempo parado. A base saudável é 4.900 × 0,120 s = **588** chamadas abertas. As 100 que o aplicativo segura por 8 s (8 s é **estimativa**: o enunciado diz que o aplicativo desiste por timeout e não diz quantos segundos) somam 100 × 8 = **800**. Total = **1.388**. O dobro da base é 1.176. 1.388 passa de 1.176, então o alerta de "em andamento" dispara, e o alerta da média não. O teste `requisicoesAindaEmAndamentoNaoEntramNaMedia` usa esses inteiros. O limiar do alerta é o dobro da base medida em 10 min, não os 8 s: os 8 s só montam este exemplo. Se o timeout do aplicativo for outro, a conta do exemplo muda e o limiar não. O medidor no ar é `checkout_http_em_andamento`. O projeto também publica `checkout_pedidos_em_aberto`, que conta pedido fora de `CONCLUIDO`, `CANCELADO_SEM_COBRANCA` e `CANCELADO_COM_ESTORNO` (no laboratório, `CONCLUIDO` se chama `CONFIRMADO`). Esse segundo medidor pega o caso em que o HTTP respondeu 202 em 120 ms e a saga ficou parada: a média HTTP é honestamente 120 ms, e o pedido continua em `AGUARDANDO_PAGAMENTO` ou num estado de verificação.
   >
   > O canary pede o mesmo histograma separado por `versao`. Misturar as dez réplicas antes de tirar o percentil também esconde o problema. Exemplo com números que o teste `mediaDosP99EntreReplicasEscondeOCanary` reproduz:
   >
@@ -166,7 +166,7 @@
   >
   > O `sum by (le, versao)` junta as réplicas da mesma versão e mantém v1 e v2 separadas. Somar os baldes primeiro é o que faz o 6,0 s aparecer. Tirar o p99 em cada réplica e depois fazer a média é a conta que deu 790 ms.
   >
-  > Além das três séries RED, o painel tem a conversão: pedidos que chegam a `CONFIRMADO` dividido pelos que entraram em `RECEBIDO`, por versão. No incidente a conversão foi o número que caiu, e ela não estava no painel. **Decisão** de alerta, para a próxima abertura:
+  > Além das três séries RED, o painel tem a conversão: pedidos que chegam a `CONCLUIDO` dividido pelos que entraram em `PENDENTE`, por versão (no laboratório esses dois estados se chamam `CONFIRMADO` e `RECEBIDO`). No incidente a conversão foi o número que caiu, e ela não estava no painel. **Decisão** de alerta, para a próxima abertura:
   >
   > | Alerta | Dispara | Fica em silêncio neste incidente, de propósito |
   > | :--- | :--- | :--- |
@@ -184,7 +184,7 @@
   > | Pool de conexões do PostgreSQL (HikariCP) | conexões em uso / tamanho do pool | threads esperando conexão (`fila > 0`) | timeout ao pegar conexão |
   > | Pool do cliente HTTP que chama o PSP e o Estoque | chamadas em uso / limite | chamadas esperando uma vaga | timeout de conexão |
   > | Consumidor da saga no Kafka | registros em processamento / paralelismo | lag do tópico, em mensagens e em segundos | falha ao processar, indo para retry |
-  > | Dinheiro em Pix ainda não confirmado | soma pendente / teto | pedido novo recusado pelo teto, ainda com HTTP 200 e estado `CANCELADO_SEM_COBRANCA` | Pix que passou de 24 h em `ESTORNO_FALHOU` |
+  > | Dinheiro em Pix ainda não confirmado | soma em `AGUARDANDO_PAGAMENTO` / teto medido | pedido novo recusado pelo teto, ainda com HTTP 200 e estado `CANCELADO_SEM_COBRANCA` | pedido em `ESTORNO_FALHOU` (24 h depois das cinco tentativas, com consulta diária) |
   >
   > O exemplo que o teste `poolSaturadoDisparaComCpuBaixaEZeroHttp500` trava: pool de 10 conexões, as 10 ocupadas, fila de 200, CPU em 15%, HTTP 500 em zero. A utilização é 10/10 = 1. O alerta olha a fila, a utilização em 100% e a CPU abaixo de 40%. Com a fila em zero o mesmo alerta fica em silêncio. A CPU baixa é compatível com a fila cheia: a thread parada no `socketRead` não gasta CPU. Por isso um alerta só de CPU não vê este recurso.
   >
@@ -192,7 +192,7 @@
   >
   > O lag do Kafka é o sinal do caso "HTTP respondeu em 120 ms". O `finalizar` publicou o evento e devolveu 202. Se o consumidor parar, a CPU do Checkout continua baixa, o HTTP 500 continua zero, e o lag sobe junto com `checkout_pedidos_em_aberto`.
   >
-  > O teto de pendente existe para um defeito que nunca confirma Pix não criar exposição sem fim, também com zero HTTP 500. A conta da exposição normal é **estimativa**, porque a aula não diz a fração de Pix nem o ticket: 20% de Pix × 5.000 TPS × 30 s até o Pix confirmar × R$ 180 = 1.000 × 30 × 180 = **R$ 5.400.000** em aberto num instante saudável. **Decisão:** teto global de R$ 8.000.000, cerca de 1,5 vez essa estimativa, e teto de R$ 2.000 por cliente. Passou do teto, a chamada ao PSP não acontece, o estoque reservado é liberado e o estado é `CANCELADO_SEM_COBRANCA`. O teste usa um teto pequeno de propósito (R$ 100 por cliente e dois pedidos de R$ 80) para a segunda cobrança ser bloqueada numa execução curta. O teto do `application.yml`, o da produção, é o de R$ 2.000 e R$ 8.000.000.
+  > O teto de pendente existe para um defeito que nunca confirma o Pix não criar exposição sem fim, também com zero HTTP 500. A aula não diz a fração de Pix nem o ticket, então um valor em reais chutado não vira limiar. A conta 20% × 5.000 TPS × 30 s × R$ 180 = R$ 5.400.000 só mostra a forma (vazão × fração × tempo aberto × ticket). Os insumos não estão no enunciado e não entram no alerta. **Decisão:** o teto global é 1,5 vez a soma medida de Pix em `AGUARDANDO_PAGAMENTO` na hora anterior à abertura. O teto por cliente é o maior valor em aberto que o negócio já aceitou, também medido. Enquanto essa base não existe, o sinal que vale é a contagem de pedidos em `AGUARDANDO_PAGAMENTO` e em estado de verificação, não um número de reais. Passou do teto medido, a chamada ao PSP não acontece, o estoque reservado é liberado e o estado é `CANCELADO_SEM_COBRANCA`. O teste usa um teto pequeno de propósito (R$ 100 por cliente e dois pedidos de R$ 80). Os números do `application.yml` (R$ 2.000 e R$ 8.000.000) são fixture para o laboratório subir. Não são o alerta de produção.
 - **Labels:** Quais labels você permite nessas métricas e quais proíbe? Diga o efeito de cada escolha no servidor de métricas.
   > No Prometheus, cada combinação diferente de labels é uma série temporal nova. O servidor aguenta mal quando o conjunto de valores cresce sem teto. A documentação de nomes e labels diz isso com as palavras user id e e-mail: não são label.
   >
@@ -254,7 +254,32 @@
 ## 4. Estratégia de Testes
 
 - **Qual a nossa estratégia para testar isso e garantir que funciona?** Antes da próxima Black Friday, como você prova que os painéis e os alertas mostrariam este incidente?
-  > O incidente foi visto pelo cliente e não pelo painel. O painel tinha média, CPU e HTTP 500, e os três ficaram verdes: 120 ms, CPU abaixo de 40%, zero pico de 500. O sintoma foi outro: o botão "Finalizar Pedido" carregando até o aplicativo desistir, e a conversão caindo. O postmortem, no formato blameless do SRE book, separa as duas coisas. O sintoma é o que o cliente viu. Os fatores que deixaram o sintoma invisível são do sistema: log em texto livre sem um id compartilhado, duração publicada como média, saturação de pool e lag de fila fora do painel, conversão fora do canary, e nenhum estado que dissesse se o dinheiro tinha se movido. Quem olhou o painel viu verde porque o painel só tinha aqueles três números. O teste abaixo falha se um desses buracos voltar.
+  > O incidente foi visto pelo cliente e não pelo painel. O painel tinha média, CPU e HTTP 500, e os três ficaram verdes: 120 ms, CPU abaixo de 40%, zero pico de 500. O sintoma foi outro: o botão "Finalizar Pedido" carregando até o aplicativo desistir, e a conversão caindo. O postmortem, no formato blameless do SRE book, separa as duas coisas. O sintoma é o que o cliente viu. Os fatores que deixaram o sintoma invisível são do sistema, não de quem leu o painel. O teste abaixo falha se um desses buracos voltar.
+  >
+  > **O que falta em cada serviço para achar o travamento.** Hoje os três escrevem texto livre, cada um do seu jeito, sem um id compartilhado.
+  >
+  > | Serviço | O que falta hoje | O que passa a expor |
+  > | :--- | :--- | :--- |
+  > | Checkout | média sem histograma, canary sem série por versão, nenhum estado do pedido no log | `trace_id`, `order_id`, `estado`, histograma por `versao`, chamadas em andamento, conversão |
+  > | Pagamento | a chamada ao PSP não aparece no mesmo trace; timeout vira silêncio | o mesmo `traceparent`, span da chamada ao PSP, `estado` `PAGAMENTO_EM_VERIFICACAO` ou `ESTORNO_EM_REVISAO`, duração de `cobrar` e de `estornar` |
+  > | Estoque | a reserva não tem span nem estado quando a resposta não volta | o mesmo `traceparent`, span de reservar e de confirmar, `estado` `ESTOQUE_EM_VERIFICACAO` ou `CONFIRMACAO_EM_VERIFICACAO` |
+  >
+  > **Mitigação enquanto a causa é desconhecida.** A tabela de hipóteses abaixo ainda não fechou. Duas ações não dependem de saber qual linha está certa, e as duas são reversíveis.
+  >
+  > 1. **Canary.** Abortar o rollout e devolver 100% do tráfego à frota estável (o abort da Aula 5, pré-aprovado). Se a `v2` for a causa, o cliente novo deixa de cair nela. Se a `v1` estiver igual, o abort não cura, mas tira uma variável. Não se desfaz migração e não se reinicia a frota inteira no escuro.
+  > 2. **Cliente.** Enquanto `checkout_http_em_andamento` ou a contagem de estados de verificação estiver acima do limiar, o Checkout responde `503` com `Retry-After` nos `finalizar` novos, em vez de segurar a tela até o aplicativo desistir. O app mostra "tente de novo" e repete com a mesma chave de idempotência. Pedido que já está em verificação não é cancelado e não é estornado: o job só muda o estado depois de consultar o participante. Não se mostra compra concluída.
+  >
+  > **Hipóteses.** Cada linha se confirma ou se descarta com um sinal que o desenho acima passa a ter. A investigação fecha a tabela; não escolhe a causa pelo sintoma.
+  >
+  > | Hipótese | Sinal que confirma | Sinal que descarta |
+  > | :--- | :--- | :--- |
+  > | PSP lento ou mudo | p99 ou em andamento de `cobrar` alto; o trace do pedido parado no span do PSP; sobe `PAGAMENTO_EM_VERIFICACAO`; CPU baixa | span do PSP curto; o estado parado é estoque ou confirmação; o lag do Kafka sobe com o PSP saudável |
+  > | Pool de conexões do banco cheio | fila do pool > 0, utilização 100%, CPU baixa, HTTP 500 ainda zero | fila do pool em zero enquanto as chamadas em andamento sobem |
+  > | Consumidor da saga parado (lag) | HTTP 202 perto de 120 ms, `checkout_pedidos_em_aberto` sobe, lag do tópico sobe em mensagens e em segundos | lag estável e o atraso está no span HTTP, antes do 202 |
+  > | Réplica do canary (`v2`) | p99 da `versao=v2` alto e p99 da `v1` estável. A média dos p99 por réplica pode ficar em silêncio (os 790 ms da seção 2) | `v1` e `v2` com o mesmo p99 |
+  > | Estoque mudo | sobe `ESTOQUE_EM_VERIFICACAO`; span do estoque longo; esses traces têm zero cobranças | o estado parado é pagamento ou confirmação; o estoque responde rápido no trace |
+  >
+  > **Postmortem.** Sintoma: tela carregando e conversão caindo. Fatores contribuintes: log sem id compartilhado nos três serviços, duração publicada como média, saturação de pool e lag fora do painel, conversão fora do canary, e um estado que não dizia se o dinheiro tinha se movido. Quem olhou o painel viu verde porque o painel só tinha média, CPU e HTTP 500. Isso não é a causa do travamento; é o que impediu de vê-lo. A causa fica na linha da tabela que os sinais fecharem. Até lá, o postmortem não nomeia um culpado nem uma hipótese como fato.
   >
   > A prova roda em dois níveis. Os dois usam a mesma régua: com o cenário do incidente injetado, o alerta de quantil ou o de trabalho em andamento dispara, e o alerta de média acima de 300 ms fica em silêncio. Essa segunda conferência é a verificação negativa. Passar no caminho feliz não basta. O teste também falha se aparecer o estado proibido.
   >
@@ -271,7 +296,7 @@
   > | `mdcNaoAtravessaThreadETraceparentAtravessa` | a thread nova vê o mapa vazio; o evento com `traceparent` devolve o mesmo trace-id | |
   > | `traceparentRejeitaIdSoDeZerosELogNaoLevaCpf` | o cabeçalho só de zeros é rejeitado; a linha tem `trace_id` e `order_id` e não tem o CPF | |
   >
-  > **2. O pedido, com participante mudo.** `SagaDiagnosticoTest` usa Estoque e PSP scriptados. A regra, em toda etapa, é a mesma: se a resposta não chega, consulta o status antes de decidir. Enquanto o status for desconhecido, o pedido fica no estado de verificação. Não confirma, não cancela e não estorna.
+  > **2. O pedido, com participante mudo.** `SagaDiagnosticoTest` usa Estoque e PSP scriptados. A regra, em toda etapa, é a mesma: se a resposta não chega, consulta o status antes de decidir. Enquanto o status for desconhecido, o pedido fica no estado de verificação. Não confirma, não cancela e não estorna. Onde a tabela diz `CONFIRMADO`, o laboratório afirma esse sinônimo; no apêndice o estado é `CONCLUIDO`.
   >
   > | Situação | Estado esperado | Verificação negativa |
   > | :--- | :--- | :--- |
@@ -306,7 +331,7 @@
   > | Descida | 10 s | de volta a 500/s |
   > | Recuperação | 1 min | 500/s |
   >
-  > Durante o pico, 2% das chamadas de estoque dormem 8 s. É a mesma fração e a mesma espera usadas na conta das chamadas em andamento. O spike passa só se, em até 30 s, o alerta de quantil ou o de em andamento estiver disparado, o alerta de média acima de 300 ms estiver em silêncio, um trace lento tiver o mesmo `trace_id` no Checkout e no Estoque, a saída de métricas não tiver `order_id`, `user_id` nem `cpf`, e, no minuto de recuperação, `checkout_http_em_andamento` voltar para perto da base. Pedido que ficou no meio está num estado de verificação, nunca em `CONFIRMADO`, e o job só o move depois de consultar o status.
+  > Durante o pico, 2% das chamadas de estoque dormem 8 s. É a mesma fração e a mesma espera usadas na conta das chamadas em andamento. O spike passa só se, em até 30 s, o alerta de quantil ou o de em andamento estiver disparado, o alerta de média acima de 300 ms estiver em silêncio, um trace lento tiver o mesmo `trace_id` no Checkout e no Estoque, a saída de métricas não tiver `order_id`, `user_id` nem `cpf`, e, no minuto de recuperação, `checkout_http_em_andamento` voltar para perto da base. Pedido que ficou no meio está num estado de verificação, nunca em `CONCLUIDO` (o laboratório afirma o sinônimo `CONFIRMADO`), e o job só o move depois de consultar o status.
   >
   > O `mvn verify` roda os níveis 1 a 3: 26 testes. O k6 é o nível 4, executado em staging quando a ferramenta e o collector estão de pé. Os dois olham a mesma régua. Se o alerta de média for o único alerta ligado no pipeline, o nível 1 já quebra, antes de chegar na Black Friday.
 

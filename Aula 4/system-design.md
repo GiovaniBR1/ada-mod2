@@ -6,7 +6,7 @@
 >
 > **A carga.** 5.000 checkouts por segundo no pico e milhões de clientes atualizando "Meus Pedidos" a cada poucos segundos.
 >
-> **O que não muda das aulas anteriores:** a `Idempotency-Key` contra o clique duplo, o disjuntor e o timeout no parceiro, o estado `PENDENTE` com reconciliação (Aula 2), e o `UPDATE` atômico do estoque com Bulkhead por produto antes do banco (Aula 3).
+> **O que não muda das aulas anteriores:** a `Idempotency-Key` contra o clique duplo, o disjuntor e o timeout no parceiro, o `PENDENTE` da **linha de pagamento** quando a resposta do parceiro é ambígua (Aula 2; não é o estado do pedido), e o `UPDATE` atômico do estoque com Bulkhead por produto antes do banco (Aula 3). Os nomes do pedido estão no [apêndice](apendice-maquina-de-estados.md), compartilhado com as Aulas 5 e 6.
 
 **Glossário curto.** *Saga*: uma compra dividida em passos locais, cada um com um "desfazer" (a **compensação**). *Outbox*: tabela onde o serviço grava o evento junto com o dado, na mesma transação. *Broker*: o carteiro das mensagens entre serviços (aqui, Kafka). *CQRS*: separar o modelo que grava do modelo que responde consultas. *Idempotente*: fazer duas vezes dá o mesmo resultado que fazer uma.
 
@@ -47,23 +47,31 @@
 - **Estados do Pedido:**
   > **Escolha de negócio: reservar o estoque antes de cobrar.** É o contrário do incidente: se não há unidade, a compra para **sem cobrar ninguém**. A reserva tem prazo (`expira_em`, ex.: 15 min) para o cliente pagar o Pix. O QR Code do Pix vence junto com a reserva. Mesmo assim o incidente ainda pode acontecer: o cliente paga no último segundo, a confirmação do PSP chega atrasada, e nesse meio-tempo a reserva expirou e a última TV foi para outra pessoa. É por isso que a compensação existe.
   >
+  > O diagrama completo, o que aconteceu com `PENDENTE` e com `CANCELADO`, as cinco tentativas e o prazo de 24 h estão no [apêndice](apendice-maquina-de-estados.md). Resumo das saídas que o texto antigo juntava num `CANCELADO` só:
+  >
   > ```mermaid
   > stateDiagram-v2
   >   [*] --> PENDENTE: checkout recebido
   >   PENDENTE --> AGUARDANDO_PAGAMENTO: estoque reservado (prazo 15 min)
-  >   PENDENTE --> CANCELADO: sem estoque (nada cobrado)
+  >   PENDENTE --> CANCELADO_SEM_COBRANCA: sem estoque (nada cobrado)
+  >   PENDENTE --> ESTOQUE_EM_VERIFICACAO: reserva sem resposta no prazo
   >   AGUARDANDO_PAGAMENTO --> PAGO: Pix confirmado
-  >   AGUARDANDO_PAGAMENTO --> CANCELADO: Pix não pago no prazo (reserva liberada)
+  >   AGUARDANDO_PAGAMENTO --> CANCELADO_SEM_COBRANCA: Pix não pago no prazo (reserva liberada)
+  >   AGUARDANDO_PAGAMENTO --> PAGAMENTO_EM_VERIFICACAO: PSP sem resposta e consulta aberta
   >   PAGO --> CONCLUIDO: reserva confirmada
   >   PAGO --> ESTORNANDO: reserva rejeitada (expirou e esgotou)
-  >   ESTORNANDO --> CANCELADO: Pix devolvido
-  >   ESTORNANDO --> ESTORNO_EM_REVISAO: devolução falhou após 5 tentativas
-  >   ESTORNO_EM_REVISAO --> CANCELADO: devolvido pela equipe
+  >   PAGO --> CONFIRMACAO_EM_VERIFICACAO: confirmação sem resposta no prazo
+  >   ESTORNANDO --> CANCELADO_COM_ESTORNO: Pix devolvido
+  >   ESTORNANDO --> ESTORNO_EM_REVISAO: 5 tentativas sem confirmação
+  >   ESTORNO_EM_REVISAO --> CANCELADO_COM_ESTORNO: PSP confirmou
+  >   ESTORNO_EM_REVISAO --> ESTORNO_FALHOU: 24 h sem confirmação
+  >   ESTORNO_FALHOU --> CANCELADO_COM_ESTORNO: consulta diária confirma
+  >   CANCELADO_SEM_COBRANCA --> ESTORNANDO: Pix chegou depois do cancelamento
   >   CONCLUIDO --> [*]
-  >   CANCELADO --> [*]
+  >   CANCELADO_COM_ESTORNO --> [*]
   > ```
   >
-  > Cada transição é `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Se 0 linhas mudaram, a mensagem é velha ou repetida e é ignorada. `CANCELADO` só existe **depois** de o dinheiro voltar; nunca há "cancelado com Pix retido".
+  > Cada transição é `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Se 0 linhas mudaram, a mensagem é velha ou repetida e é ignorada, com uma exceção: Pix aprovado em `CANCELADO_SEM_COBRANCA` não é descarte (o dinheiro entrou). `CANCELADO_COM_ESTORNO` só existe **depois** de o dinheiro voltar. `CANCELADO_SEM_COBRANCA` só existe quando nada foi capturado. Não há estado "cancelado com Pix retido". `PAGO` tem `prazo_passo` (ex.: 30 s): sem resposta da reserva, o pedido não fica cobrado para sempre.
 - **Detalhamento dos Fluxos:**
   > **Caminho feliz.**
   > 1. Checkout grava o pedido `PENDENTE` e o comando `ReservarEstoque` na outbox (uma transação).
@@ -77,11 +85,11 @@
   > 1. No passo 5, o Estoque encontra a reserva já `LIBERADA` (expirou e a unidade foi vendida) e responde `ReservaRejeitada`.
   > 2. Orquestrador muda para `ESTORNANDO` e emite `EstornarPagamento`, na mesma transação.
   > 3. O Pagamento pede a **devolução do Pix** ao PSP, grava `ESTORNADO` e responde `PagamentoEstornado`.
-  > 4. Orquestrador muda para `CANCELADO`. O cliente recebe a notificação "o produto esgotou, devolvemos seu Pix".
+  > 4. Orquestrador muda para `CANCELADO_COM_ESTORNO`. O cliente recebe a notificação "o produto esgotou, devolvemos seu Pix".
   >
-  > **Pix que chega tarde.** Se a confirmação do PSP chega com o pedido já `CANCELADO` por falta de pagamento, o evento não é descartado como "atrasado": o dinheiro entrou. O orquestrador emite `EstornarPagamento` na hora, com a mesma chave.
+  > **Pix que chega tarde.** Se a confirmação do PSP chega com o pedido já em `CANCELADO_SEM_COBRANCA` (venceu sem pagamento), o evento não é descartado como "atrasado": o dinheiro entrou. O orquestrador muda para `ESTORNANDO` e emite `EstornarPagamento` na hora, com a mesma chave. O fim, quando o PSP confirma, é `CANCELADO_COM_ESTORNO`.
   >
-  > Ninguém precisa intervir: cada passo é disparado por um evento, e um **job de prazos** varre pedidos parados além do `prazo_passo` (ex.: 30 s sem resposta do Estoque) e reenvia o comando. Esse job também bloqueia a espera infinita: nenhum pedido fica parado num estado intermediário sem alguém olhando.
+  > **Quem varre o que parou.** Cada passo feliz é disparado por um evento. Um **job de prazos** varre todo estado que não é fim com `prazo_passo` vencido, inclusive `PAGO` (ex.: 30 s sem resposta do Estoque). O job não grava mensagem nova: reenvia o **mesmo comando**, com o mesmo `message_id` (chave estável `pedido_id` + tipo do passo, não um uuid novo) e a mesma chave de negócio. Um id novo passaria na PK de `mensagens_processadas` e executaria o efeito outra vez. Em `PAGO`, o job consulta a reserva: confirmada vira `CONCLUIDO`; rejeitada vai para `ESTORNANDO`; desconhecida vai para `CONFIRMACAO_EM_VERIFICACAO` e não estorna enquanto o estoque for desconhecido.
 
 ### 2.2 Resiliência da Compensação e Consistência
 
@@ -89,13 +97,13 @@
   > 1. **Estorno idempotente, com escolha explícita da chave:** a chave de idempotência enviada ao PSP é o **id do pagamento**. Escolha de negócio: **um pagamento tem no máximo um estorno, sempre do valor total** (o pedido tem uma TV só; estorno parcial fica para quando existir carrinho com vários itens). No banco: `UNIQUE (pagamento_id)` na tabela `estorno`. Repetir o comando dez vezes devolve o dinheiro uma vez.
   > 2. **Timeout não é falha.** Se o PSP não responde, não sabemos se devolveu. Como no `PENDENTE` da Aula 2, antes de tentar de novo o Pagamento **consulta** o estorno no PSP pela mesma chave.
   > 3. **Tentativas com espera crescente:** 1 s, 5 s, 30 s, 2 min, 10 min. O disjuntor da Aula 2 protege o PSP de levar uma enxurrada de estornos na Black Friday.
-  > 4. **Depois de 5 tentativas**, o pedido vai para `ESTORNO_EM_REVISAO`, a mensagem vai para a **DLQ** (a fila das mensagens que não deram certo) e um alerta abre um chamado. O cliente vê "devolução em análise", nunca "cancelado" sem o dinheiro.
+  > 4. **Depois de 5 tentativas**, o pedido vai para `ESTORNO_EM_REVISAO`, a mensagem vai para a **DLQ** (a fila das mensagens que não deram certo) e um alerta abre um chamado. O cliente vê "devolução em análise", nunca um cancelamento com o Pix retido. As cinco tentativas continuam sendo o que abre a revisão. O prazo de **24 h** (apêndice) é o que a revisão ganhou para não ficar sem fim: sem confirmação, o estado passa a `ESTORNO_FALHOU`, o chamado segue aberto e o job consulta o PSP uma vez por dia. Se o PSP confirmar, fecha em `CANCELADO_COM_ESTORNO` sem uma segunda devolução.
 - **Atomicidade entre Estado e Mensageria (Dual Write):**
   > **O problema.** "Grava no banco e depois publica no Kafka" são duas escritas. Se a rede cai entre as duas, o pedido fica `PAGO` e o comando de confirmar o estoque **nunca sai**: perda silenciosa. Inverter a ordem cria o oposto: evento de algo que não foi gravado.
   >
   > **A solução: Transactional Outbox.** O serviço grava o dado **e** a mensagem na tabela `outbox`, **na mesma transação local**. Ou as duas existem ou nenhuma. Quem publica é o **Debezium**: ele lê o diário de gravações do Postgres (o WAL) e manda as linhas novas da outbox para o Kafka. O código do serviço nem conhece o Kafka.
   >
-  > **O efeito colateral: entrega "pelo menos uma vez".** Se o Debezium cai depois de publicar e antes de anotar até onde leu, ele publica de novo. Por isso **todo consumidor é idempotente**: grava o `message_id` em `mensagens_processadas` (PK) na mesma transação do efeito. Mensagem repetida bate na PK e é descartada.
+  > **O efeito colateral: entrega "pelo menos uma vez".** Se o Debezium cai depois de publicar e antes de anotar até onde leu, ele publica de novo. Por isso **todo consumidor é idempotente**: grava o `message_id` em `mensagens_processadas` (PK) na mesma transação do efeito. Mensagem repetida bate na PK e é descartada. O job de prazos entra nessa regra: ele reapresenta o mesmo `message_id`. Um id novo seria outra mensagem, e a PK não a seguraria.
   >
   > **Volume.** Cada compra gera cerca de 8 mensagens (4 comandos e 4 respostas). A 5.000 TPS são **≈ 40 mil mensagens/s** e 40 mil linhas novas por segundo nas outboxes. Para a tabela não crescer sem fim, ela é particionada por dia e as partições antigas são apagadas inteiras (`DROP` da partição é instantâneo; `DELETE` de milhões de linhas não é).
 
@@ -105,7 +113,7 @@
 >
 > | Serviço | Tabela | Campos principais | Constraints e regras |
 > |---|---|---|---|
-> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK (status IN ('PENDENTE','AGUARDANDO_PAGAMENTO','PAGO','CONCLUIDO','ESTORNANDO','ESTORNO_EM_REVISAO','CANCELADO'))`; índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
+> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK` com os doze estados do [apêndice](apendice-maquina-de-estados.md) (`PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`); índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
 > | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 > | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 > | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
@@ -138,18 +146,18 @@
   > **Teste de integração principal: "Pix aprovado, estoque rejeita".** JUnit 5 com Testcontainers subindo **Kafka, Debezium e um PostgreSQL por serviço**, e o PSP no **WireMock**.
   > 1. *Dado* um produto com 1 unidade e uma reserva já expirada e vendida a outra pessoa;
   > 2. *quando* o WireMock confirma o Pix e o Estoque responde `ReservaRejeitada`;
-  > 3. *então*, esperando com Awaitility (até 10 s, sem `sleep` fixo): o pedido termina `CANCELADO`; o WireMock recebeu **exatamente 1** pedido de devolução com a chave = id do pagamento; a projeção mostra "Cancelado"; nenhuma mensagem na DLQ.
+  > 3. *então*, esperando com Awaitility (até 10 s, sem `sleep` fixo): o pedido termina `CANCELADO_COM_ESTORNO`; o WireMock recebeu **exatamente 1** pedido de devolução com a chave = id do pagamento; a projeção mostra "Cancelado, Pix devolvido"; nenhuma mensagem na DLQ.
   >
   > **Os testes de caos que provam a resiliência:**
   >
   > | Falha injetada | Como | O que deve acontecer |
   > |---|---|---|
-  > | PSP oscila no estorno | WireMock responde `503` duas vezes, depois `200` | 1 devolução só; pedido `CANCELADO` |
-  > | PSP fora do ar no estorno | WireMock sempre `503` | `ESTORNO_EM_REVISAO`, mensagem na DLQ, nunca `CANCELADO` |
+  > | PSP oscila no estorno | WireMock responde `503` duas vezes, depois `200` | 1 devolução só; pedido `CANCELADO_COM_ESTORNO` |
+  > | PSP fora do ar no estorno | WireMock sempre `503` | `ESTORNO_EM_REVISAO`, mensagem na DLQ, nunca `CANCELADO_COM_ESTORNO`; após 24 h, `ESTORNO_FALHOU`, ainda sem cancelar |
   > | Timeout do estorno | WireMock com atraso de 5 s | consulta antes de repetir; 1 devolução só |
   > | Relay cai depois de publicar | Reiniciar o container do Debezium no meio | mensagens repetidas são descartadas; o fluxo termina igual |
   > | Mensagem duplicada | Publicar o mesmo `message_id` duas vezes | o efeito acontece uma vez |
   >
-  > **Na pipeline:** esses testes rodam em todo PR que mexe na Saga (levam minutos, não segundos, por isso ficam separados dos testes de unidade). A máquina de estados tem também testes de unidade para cada transição, incluindo as proibidas (ex.: de `CANCELADO` não se sai).
+  > **Na pipeline:** esses testes rodam em todo PR que mexe na Saga (levam minutos, não segundos, por isso ficam separados dos testes de unidade). A máquina de estados tem também testes de unidade para cada transição, incluindo as proibidas (de `CONCLUIDO` e de `CANCELADO_COM_ESTORNO` não se sai; de `CANCELADO_SEM_COBRANCA` só se sai se o Pix chegar depois).
   >
-  > **Prova já feita:** a pasta `desafio/` tem uma simulação em Java puro com os seis cenários (caminho feliz, o incidente, estorno instável, estorno que sempre falha, relay que cai, sem estoque) e a saída real da execução. Ela não substitui o teste com Kafka e Postgres de verdade, mas mostra que as regras da máquina de estados fecham.
+  > **Prova já feita:** a pasta `desafio/` tem uma simulação em Java puro com os seis cenários (caminho feliz, o incidente, estorno instável, estorno que sempre falha, relay que cai, sem estoque) e a saída real da execução. Ela não substitui o teste com Kafka e Postgres de verdade. O código ainda imprime um `CANCELADO` só para os dois fins (nada cobrado, ou Pix devolvido); os nomes separados estão neste desenho e no apêndice. O laboratório não foi alterado.
