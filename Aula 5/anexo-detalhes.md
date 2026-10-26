@@ -121,8 +121,9 @@ Escrita da v2, exemplo:
 | status_pagamento (o que a v1.5 lê) | estado_saga (canônico) |
 | :--- | :--- |
 | AGUARDANDO_PIX | AGUARDANDO_PAGAMENTO |
+| CONFIRMADO | CONCLUIDO |
 
-Se o webhook cair numa réplica v1.5, ela lê `AGUARDANDO_PIX` e grava `PAGO` nas duas colunas. Nenhuma das duas manda SQL para uma coluna que não existe.
+Se o webhook cair numa réplica v1.5, ela lê `AGUARDANDO_PIX` e grava `PAGO` nas duas colunas. Tradução de verdade no mesmo caminho: a coluna antiga fica `CONFIRMADO` e a nova fica `CONCLUIDO`. Nenhuma das duas manda SQL para uma coluna que não existe.
 
 Um script que já rodou nunca é editado. O Flyway guarda o checksum, e `flyway validate` falha se o arquivo mudar. Correção vira script novo.
 
