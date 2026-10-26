@@ -128,6 +128,14 @@ public final class CheckoutService {
         Pedido pedido = pedidos.get(orderId);
         if (pedido == null) return false;
         if ("PagamentoConfirmado".equals(tipo)) {
+            if (pedido.estado() == EstadoPedido.CANCELADO_SEM_COBRANCA) {
+                if (pedido.pagamentoId() == null && !pedido.pagamentoCapturado()) {
+                    return false;
+                }
+                pedido.pagamentoCapturado(true);
+                pedido.estado(EstadoPedido.ESTORNANDO);
+                return true;
+            }
             if (pedido.estado() != EstadoPedido.AGUARDANDO_PAGAMENTO
                     && pedido.estado() != EstadoPedido.PAGAMENTO_EM_VERIFICACAO) {
                 return false;
@@ -510,14 +518,15 @@ public final class CheckoutService {
         return m;
     }
 
-    private static String resultadoDe(EstadoPedido estado) {
+    static String resultadoDe(EstadoPedido estado) {
         return switch (estado) {
-            case CONCLUIDO -> "ok";
+            case CONCLUIDO, PAGO -> "ok";
             case CANCELADO_SEM_COBRANCA -> "sem_cobranca";
-            case CANCELADO_COM_ESTORNO -> "estornado";
+            case CANCELADO_COM_ESTORNO, ESTORNANDO -> "estornado";
             case ESTORNO_FALHOU -> "estorno_falhou";
             case AGUARDANDO_PAGAMENTO -> "pix_pendente";
-            default -> "verificacao";
+            case PENDENTE, ESTOQUE_EM_VERIFICACAO, PAGAMENTO_EM_VERIFICACAO,
+                    CONFIRMACAO_EM_VERIFICACAO, ESTORNO_EM_REVISAO -> "verificacao";
         };
     }
 

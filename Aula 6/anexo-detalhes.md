@@ -31,6 +31,8 @@ Volume, decisão: a 5.000 pedidos/s, quatro linhas por pedido dariam 20.000 linh
 | `CANCELADO_SEM_COBRANCA` | Nada capturado: sem saldo, PSP recusou, ou teto de pendente estourou. |
 | `CANCELADO_COM_ESTORNO` | Havia captura e o PSP confirmou o estorno. |
 | `AGUARDANDO_PAGAMENTO` | Pix gerado e ainda não pago. O valor entra no teto de pendente. |
+| `PAGO` | Capturado, confirmação da reserva ainda no prazo. Na métrica entra como `ok`, fora da taxa de erro. |
+| `ESTORNANDO` | Estorno pedido, ainda dentro das cinco tentativas. Na métrica entra como `estornado`, fora da taxa de erro. A taxa fica com `estorno_falhou` e `verificacao`. |
 | `ESTOQUE_EM_VERIFICACAO` | Estoque mudo e a consulta não fechou. Não cobramos. |
 | `PAGAMENTO_EM_VERIFICACAO` | PSP mudo e a consulta não fechou. Não estornamos e não liberamos a reserva. |
 | `CONFIRMACAO_EM_VERIFICACAO` | Pagamento capturado e a confirmação do estoque não respondeu. Não estornamos enquanto o estoque for desconhecido. |

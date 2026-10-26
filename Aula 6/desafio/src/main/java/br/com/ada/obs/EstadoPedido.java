@@ -6,7 +6,11 @@ public enum EstadoPedido {
     ESTOQUE_EM_VERIFICACAO(false),
     AGUARDANDO_PAGAMENTO(false),
     PAGAMENTO_EM_VERIFICACAO(false),
+    /** Capturado, confirmacao da reserva ainda no prazo. Na metrica entra como ok. */
+    PAGO(false),
     CONFIRMACAO_EM_VERIFICACAO(false),
+    /** Estorno pedido, ainda dentro das cinco tentativas. Na metrica entra como estornado. */
+    ESTORNANDO(false),
     ESTORNO_EM_REVISAO(false),
     /** Prazo de revisao esgotado. O job continua consultando o PSP uma vez por dia. */
     ESTORNO_FALHOU(false),

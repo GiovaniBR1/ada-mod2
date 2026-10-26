@@ -44,6 +44,6 @@ mvn -B verify
 
 ## Resultado da validação (21/10/2026)
 
-`mvn -B verify`: BUILD SUCCESS, 26 testes, 0 falhas (OpenJDK 21.0.12, Maven 3.9.9).
+`mvn -B verify`: BUILD SUCCESS, 27 testes, 0 falhas (OpenJDK 21.0.12, Maven 3.9.9).
 
 Não rodei o k6. O arquivo `k6/spike-telemetria.js` é o roteiro; as asserções equivalentes estão nos testes Java.

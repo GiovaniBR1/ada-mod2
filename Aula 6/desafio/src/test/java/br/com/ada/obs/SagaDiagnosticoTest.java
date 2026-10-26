@@ -276,6 +276,24 @@ class SagaDiagnosticoTest {
     }
 
     @Test
+    void pagamentoConfirmadoComCobrancaDepoisDeCanceladoVaiParaEstornando() {
+        Cenario c = new Cenario();
+        c.estoque.reservar(Estoque.Status.RESERVADO);
+        c.psp.cobrar(Psp.Status.PIX_GERADO);
+
+        var r = c.finalizar("48213");
+        assertThat(r.pedido().pagamentoId()).isEqualTo("pag-48213");
+        r.pedido().estado(EstadoPedido.CANCELADO_SEM_COBRANCA);
+
+        assertThat(c.service.aplicarEvento("48213", "PagamentoConfirmado")).isTrue();
+        assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.ESTORNANDO);
+        assertThat(c.service.pedido("48213").pagamentoCapturado()).isTrue();
+        assertThat(CheckoutService.resultadoDe(EstadoPedido.PAGO)).isEqualTo("ok");
+        assertThat(CheckoutService.resultadoDe(EstadoPedido.ESTORNANDO)).isEqualTo("estornado");
+        assertThat(CheckoutService.resultadoDe(EstadoPedido.PAGAMENTO_EM_VERIFICACAO)).isEqualTo("verificacao");
+    }
+
+    @Test
     void eventosUsamOrderIdComoChaveECarregamOTrace() {
         Cenario c = new Cenario();
         c.estoque.reservar(Estoque.Status.SEM_SALDO);
