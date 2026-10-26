@@ -132,9 +132,9 @@
   > É lock pessimista (o Postgres trava a linha e as outras esperam), mas sem o "lê, calcula no Java, grava": a regra mora numa frase só, e o `CHECK (disponivel >= 0)` na tabela é a segunda trava. O `SELECT ... FOR UPDATE` explícito (`@Lock(LockModeType.PESSIMISTIC_WRITE)` no repositório) fica para quando a regra não cabe num `UPDATE`.
   >
   > **Regra de ouro (herdada da Aula 02): nunca segurar lock nem transação durante a chamada ao parceiro.** O fluxo tem duas transações curtas:
-  > 1. **T1** (milissegundos): grava a `Idempotency-Key`, cria pedido, pagamento `PENDENTE` e `reserva` (`ATIVA`, com `expira_em`) e, **por último**, baixa o estoque (o `UPDATE` acima). Commit. Se o `UPDATE` afetar 0 linhas, a T1 inteira volta (`ROLLBACK`) e a resposta é `409`.
+  > 1. **T1** (milissegundos): grava a `Idempotency-Key`, cria o pedido e a `reserva` (`ATIVA`, com `expira_em`) e, **por último**, baixa o estoque (o `UPDATE` acima). Não grava pagamento. Commit. Se o `UPDATE` afetar 0 linhas, a T1 inteira volta (`ROLLBACK`) e a resposta é `409`.
   > 2. Chama o parceiro **fora de transação** (Resilience4j).
-  > 3. **T2**: fecha o pagamento (2.1). Se `RECUSADO` ou `EXPIRADO`, na mesma transação, libera a reserva e devolve a unidade, só se a reserva ainda estiver `ATIVA` (`UPDATE reserva SET status='LIBERADA' WHERE id=? AND status='ATIVA'`). Isso impede devolver duas vezes (ESTADO). Se `APROVADO`, marca a reserva `CONFIRMADA`, com a mesma guarda `WHERE status='ATIVA'`.
+  > 3. **T2**, quando o parceiro responde: grava a linha de pagamento. Resultado claro nasce `APROVADO` ou `RECUSADO`. `PENDENTE` só se a chamada já saiu e o resultado é ambíguo (timeout ou 500); nesse meio-tempo o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. 503 sem chamada não cria linha. O `UPDATE` otimista da seção 2.1 fecha um `PENDENTE` que já existe. Se `RECUSADO` ou `EXPIRADO`, na mesma transação, libera a reserva e devolve a unidade, só se a reserva ainda estiver `ATIVA` (`UPDATE reserva SET status='LIBERADA' WHERE id=? AND status='ATIVA'`). Isso impede devolver duas vezes (ESTADO). Se `APROVADO`, marca a reserva `CONFIRMADA`, com a mesma guarda `WHERE status='ATIVA'`.
   >
   > **Quanto a linha quente aguenta (estimativa, não medida).** A linha do produto atende **uma compra por vez**: enquanto uma T1 segura o lock, as outras esperam na fila. A conta é:
   >
@@ -234,7 +234,7 @@
 1. **E se...** a resposta atrasada do parceiro e a reconciliação fecharem o mesmo `PENDENTE` ao mesmo tempo, com resultados diferentes?
    - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada. Se o vencedor foi `EXPIRADO` e o dinheiro tinha entrado, a linha do pagamento não reabre; a saga (apêndice da Aula 4) pede o estorno.
 2. **E se...** o pagamento for recusado ou expirar depois que a última unidade já foi reservada?
-   - **Resposta do Sistema:** a T2 fecha o pagamento como `RECUSADO`/`EXPIRADO` e, **na mesma transação**, faz `UPDATE reserva SET status = 'LIBERADA' WHERE id = ? AND status = 'ATIVA'` e devolve a unidade só se essa linha mudou. Se a aplicação cair antes, a reserva vence (`expira_em`) e a reconciliação faz o mesmo. Liberar duas vezes é impossível: a segunda tentativa encontra `LIBERADA` e afeta 0 linhas.
+   - **Resposta do Sistema:** a T2 grava a linha de pagamento como `RECUSADO` ou `EXPIRADO` (ela nasce nessa resposta, não na T1) e, **na mesma transação**, faz `UPDATE reserva SET status = 'LIBERADA' WHERE id = ? AND status = 'ATIVA'` e devolve a unidade só se essa linha mudou. Se a aplicação cair antes da T2, ainda não há linha de pagamento: a reserva segue `ATIVA`, o estoque continua baixado, e a reconciliação consulta o parceiro pela mesma chave antes de gravar o pagamento e liberar. Liberar duas vezes é impossível: a segunda tentativa encontra `LIBERADA` e afeta 0 linhas.
 3. **E se...** a migration do índice novo travar as gravações durante o pico?
    - **Resposta do Sistema:** `CREATE INDEX` comum pega um lock que bloqueia escritas na tabela. Usamos `CREATE INDEX CONCURRENTLY`, que não bloqueia `INSERT`/`UPDATE` (é mais lento e varre a tabela duas vezes). Ele não roda dentro de transação, então no Flyway a migration fica marcada como não transacional (arquivo de configuração ao lado do script, ex.: `V7__indice_pedidos.sql.conf` com `executeInTransaction=false`). Se falhar no meio, sobra um índice `INVALID`: o deploy confere `pg_index.indisvalid` e, se preciso, faz `DROP INDEX CONCURRENTLY` e cria de novo. E a migration roda **antes** da janela da Black Friday, nunca no pico.
 
@@ -245,21 +245,21 @@ sequenceDiagram
   participant DB as PostgreSQL (primário)
   participant P as Parceiro
   C->>API: POST /checkout (Idempotency-Key)
-  API->>DB: T1: INSERT chave UNIQUE + pedido + pagamento PENDENTE + reserva ATIVA; por último UPDATE estoque (disponivel >= qtd)
+  API->>DB: T1: INSERT chave UNIQUE + pedido + reserva ATIVA; por último UPDATE estoque (disponivel >= qtd)
   alt 0 linhas no estoque
     DB-->>API: esgotado
     API-->>C: 409 (nada cobrado)
   else reservado
     DB-->>API: commit
     API->>P: cobrança (fora de transação, Resilience4j)
-    P-->>API: aprovado / recusado / timeout
-    API->>DB: T2: UPDATE pagamento ... WHERE version = ? (e status = PENDENTE)
-    opt recusado
+    P-->>API: aprovado / recusado / timeout ou 500
+    API->>DB: T2: INSERT pagamento (APROVADO, RECUSADO ou, só no resultado ambíguo, PENDENTE)
+    opt recusado ou expirado
       API->>DB: libera reserva WHERE status = ATIVA (mesma T2)
     end
-    API-->>C: 201 / 402 / 202 PENDENTE
+    API-->>C: 201 / 402, ou 202 se o pagamento ficou PENDENTE
   end
-  Note over DB: Reconciliação fecha PENDENTE vencido e libera a reserva com a mesma regra
+  Note over DB: 503 sem chamada não cria pagamento. Reconciliação só fecha um PENDENTE já gravado e libera a reserva com a mesma regra
 ```
 
 ---
