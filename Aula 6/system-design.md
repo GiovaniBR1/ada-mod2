@@ -62,7 +62,7 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
   > Decisão: tail puro no collector. O SDK usa `AlwaysOn`. Head na entrada descarta o lento antes de existir duração.
   > Regra: 100% com erro, 100% acima de 800 ms, 100% em verificação, `ESTORNO_EM_REVISAO` ou `ESTORNO_FALHOU`, 1% do resto pelo trace-id. Em produção `finalizar` devolve 202 e o comando segue por Kafka, via outbox. O `decision_wait` de 15 s é a janela em que os spans desse `trace_id` ainda chegam: o 202 e o do consumidor. Pix (15 min), `prazo_passo` de 30 s do `PAGO` e as retentativas do estorno são outros traces, ligados por `order_id`. Orçamentos à parte: Aula 2, 2 s de resposta do parceiro; Aula 4, 3 s na chamada de estorno. Os 8 s desta aula são a estimativa de Little e o sono do teste de estoque. O 5 s do estorno é a segunda espera, não uma chamada ao Pagamento. No laboratório, `CheckoutService.finalizar` chama reservar, cobrar e confirmar no mesmo processo só para simular a borda.
   > Por quê: a regra dos 800 ms precisa ver a espera. O histograma não entra nessa amostra: toda chamada soma no balde.
-  > Exemplo de custo, premissa de 6 spans e cerca de 1 KB: 100% seriam 30 MB/s (cerca de 2,6 TB/dia). Com a regra, cerca de 150 traces/s e 80 GB/dia. Na janela de 15 s cabem 75.000 traces, cerca de 450 MB; o collector pede 2 GB. Prazo: 7 dias. Conta: [anexo, traces](anexo-detalhes.md#traces).
+  > Exemplo de custo, premissa de 6 spans e 1 KB por span (5.000 × 6 KB): 100% seriam 30 MB/s (cerca de 2,6 TB/dia). Com a regra, cerca de 150 traces/s e 80 GB/dia. Na janela de 15 s cabem 75.000 traces, cerca de 450 MB; o collector pede 2 GB. Prazo: 7 dias. Conta: [anexo, traces](anexo-detalhes.md#traces).
 
 ---
 
