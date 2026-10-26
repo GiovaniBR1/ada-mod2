@@ -109,7 +109,7 @@ class ResilienciaIntegrationTest {
         pagar(chave()).andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("PENDENTE"));
         long ms = System.currentTimeMillis() - t0;
         System.out.println(">> parceiro com 3s de atraso; nossa API respondeu em " + ms + " ms");
-        assertThat(ms).isLessThan(2000);
+        assertThat(ms).isLessThan(2900);
         assertThat(contingencia.totalPendentes()).isEqualTo(1);
     }
 
@@ -132,12 +132,11 @@ class ResilienciaIntegrationTest {
     }
 
     @Test
-    void erro429DoParceiro_devolve503ProblemDetails_naoPropaga429() throws Exception {
+    void erro429DoParceiro_tresChamadas_gravamPendente_naoPropaga429() throws Exception {
         parceiroResponde(429, "{}", 0);
-        pagar(chave()).andExpect(status().isServiceUnavailable())
-                .andExpect(header().exists("Retry-After"))
-                .andExpect(jsonPath("$.status").value(503))
-                .andExpect(jsonPath("$.type").value("https://exemplo.ada/problemas/parceiro-sobrecarregado"));
+        pagar(chave()).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("PENDENTE"));
+        assertThat(chamadasAoParceiro()).isEqualTo(3);
     }
 
     @Test
@@ -147,8 +146,7 @@ class ResilienciaIntegrationTest {
         parceiro.stubFor(WireMock.post("/cobrancas").inScenario("intermitente").whenScenarioStateIs("ok")
                 .willReturn(okJson("{\"id\":\"pg-1\",\"status\":\"APROVADO\"}")));
         var k = chave();
-        pagar(k).andExpect(status().isServiceUnavailable()); // 503 libera a chave...
-        pagar(k).andExpect(status().isCreated());            // ...e o cliente tenta de novo com a MESMA chave
+        pagar(k).andExpect(status().isCreated()); // 503 e depois 200, na mesma chamada do cliente
         parceiro.verify(2, postRequestedFor(urlEqualTo("/cobrancas")).withHeader("Idempotency-Key", equalTo(k)));
     }
 
@@ -191,7 +189,7 @@ class ResilienciaIntegrationTest {
         var k = chave();
         pagar(k).andExpect(status().isAccepted());
         pagar(k).andExpect(status().isAccepted()).andExpect(jsonPath("$.status").value("PENDENTE"));
-        Thread.sleep(2200); // deixa a 1ª chamada lenta terminar no WireMock antes de contar
+        Thread.sleep(2500); // read timeout de 2 s; deixa o atraso de 3 s do WireMock acabar antes de contar
         assertThat(chamadasAoParceiro()).isEqualTo(1);
     }
 

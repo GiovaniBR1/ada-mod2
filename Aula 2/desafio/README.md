@@ -44,9 +44,9 @@ Regra de ouro (do system design): **falha nunca vira "aprovado"**, e a resposta 
 | Situação | O parceiro pode ter cobrado? | Nossa resposta |
 |---|---|---|
 | Parceiro respondeu 200 | sim, e sabemos o status | `201 {id, status}` |
-| Parceiro lento (read timeout de 1 s) ou 500 | **talvez** (ambíguo) | **fallback**: `202 {id, "PENDENTE"}`; uma reconciliação (fora do escopo) fecha depois |
-| Conexão recusada / connect timeout | não (nada chegou lá) | `503` + `Retry-After`, Problem Details |
-| Parceiro devolveu 429 ou 503 | não ("não processei") | `503` + `Retry-After` (não repassamos o 429 cru) |
+| Parceiro lento (read timeout de 2 s) ou 500 | **talvez** (ambíguo) | uma chamada; **fallback**: `202 {id, "PENDENTE"}` |
+| Conexão recusada / connect timeout (1 s), 3 tentativas | não (nada chegou lá) | `503` + `Retry-After`, Problem Details |
+| Parceiro devolveu 429 ou 503 nas 3 chamadas | a chamada saiu; tratamos como ambíguo | `202 PENDENTE`, mesma chave; não repassamos o 429 cru |
 | Circuito OPEN (`CallNotPermittedException`) ou bulkhead cheio | não (nem chamamos) | `503` + `Retry-After` **na hora** |
 | Fallback também falhou (não conseguiu gravar PENDENTE) | talvez | `500` Problem Details, sem stack trace |
 | Mesma chave, já concluída | — | a **mesma resposta guardada** (ex.: `202 PENDENTE` de novo), sem chamar o parceiro |
@@ -58,7 +58,7 @@ Quando sabemos que nada foi cobrado (503), a chave é **liberada**: o cliente po
 
 **Decisões e porquês:**
 - **Cliente: `RestClient`** com `SimpleClientHttpRequestFactory`: moderno, síncrono (combina com MVC + threads virtuais) e com timeouts nativos simples.
-- **Contra lentidão: `connectTimeout` (500 ms) e `readTimeout` (1 s) do próprio cliente**, não `TimeLimiter`. Motivo: o `TimeLimiter` só funciona com `CompletableFuture` e, ao "desistir", **não interrompe** a chamada bloqueante; a thread continuaria presa. O timeout do socket corta de verdade. Descartado também o `Retry` aqui: timeout e 500 são ambíguos e repetir poderia cobrar duas vezes (o design só permite retry restrito; para manter enxuto, o "retry" fica com o cliente, usando a mesma chave).
+- **Contra lentidão: `connectTimeout` (1 s) e `readTimeout` (2 s) do próprio cliente**, não `TimeLimiter`. Motivo: o `TimeLimiter` só funciona com `CompletableFuture` e, ao "desistir", **não interrompe** a chamada bloqueante; a thread continuaria presa. O timeout do socket corta de verdade. **Retry:** no máximo 3 chamadas, contando a primeira, só conexão recusada e 503/429, mesma chave. Timeout e 500 não repetem. Se as três voltarem 503 ou 429, grava `PENDENTE`.
 - **Circuit Breaker**: janela de 4 chamadas, abre com 50% de falha, fica 2 s aberto, 2 chamadas de teste em HALF_OPEN. Valores pequenos **para o teste ser rápido**; em produção calibrar com métrica real (o design sugere 50/20/30 s).
 - **Bulkhead (semáforo, 200)**: com threads virtuais, threads são "de graça"; o limite de verdade é quanto o parceiro aguenta.
 - **Threads virtuais ligadas** em `application.yml` (`spring.threads.virtual.enabled: true`) = Variação A do enunciado.
@@ -103,18 +103,18 @@ Sem parceiro de verdade em `localhost:9999`, a app responde `503` (conexão recu
 ## Resultados reais (14/10/2026, horário de Brasília)
 
 `mvn test`: **14 testes, 0 falhas, BUILD SUCCESS** (Java 21.0.12, Maven 3.9.9). Destaques do log:
-- parceiro com **3 s** de atraso → nossa API respondeu em **1015 ms** com `202 PENDENTE` (cortou no read timeout).
+- parceiro com **3 s** de atraso → nossa API respondeu em **2016 ms** com `202 PENDENTE` (cortou no read timeout de 2 s).
 - circuito **OPEN** → nossa API respondeu em **2 ms** com `503` + `Retry-After: 2`, sem nova chamada ao parceiro.
 
 | Teste | Prova |
 |---|---|
 | sucesso_devolve201_eEnviaIdempotencyKeyNoCabecalho | 201 e o WireMock recebeu a chave no cabeçalho |
 | semIdempotencyKey_devolve400ProblemDetails_eNaoChamaParceiro | 400 `application/problem+json`, parceiro não chamado |
-| parceiroLento3s_cortaNoReadTimeout_eDevolve202Pendente | resposta < 2 s, 202 PENDENTE |
+| parceiroLento3s_cortaNoReadTimeout_eDevolve202Pendente | resposta antes dos 3 s do stub, 202 PENDENTE |
 | conexaoRecusada_devolve503ComRetryAfter_porqueNadaFoiCobrado | connect ≠ read: 503 em vez de 202 |
 | erro500DoParceiro_eAmbiguo_devolve202Pendente_nuncaAprovado | 500 é ambíguo → PENDENTE |
-| erro429DoParceiro_devolve503ProblemDetails_naoPropaga429 | 429 vira 503 padronizado |
-| erros5xxIntermitentes_respostasPadronizadas | 503 e depois 201 com a **mesma** chave |
+| erro429DoParceiro_tresChamadas_gravamPendente_naoPropaga429 | 3 chamadas 429, 202 PENDENTE, sem propagar 429 |
+| erros5xxIntermitentes_respostasPadronizadas | 503 e depois 200 na mesma chamada do cliente, mesma chave |
 | sequenciaDeFalhas_abreOCircuito | estado `OPEN` após 4 falhas |
 | circuitoAberto_respondeNaHora503_semChamarParceiro | < 200 ms, contagem do WireMock não muda |
 | recuperacao_OPEN_HALFOPEN_CLOSED | OPEN → (2 s) → HALF_OPEN → CLOSED, respostas 201 |
@@ -130,4 +130,4 @@ Também subimos a app de verdade (`java -jar`) e chamamos com `curl`: 4×`503 pa
 - **Variação A, teste de carga** (k6/locust): as threads virtuais estão **ligadas**, mas não rodei o teste de carga.
 - **Variação B (WebFlux)**: não feita; o design da aula escolheu MVC + threads virtuais.
 - **Reconciliação** do `PENDENTE` e **banco real** (`UNIQUE`): simulados em memória.
-- **Retry** do Resilience4j: não usado, de propósito (ver decisões).
+- A espera de 200 ms entre retentativas está no YAML do anexo. O laboratório repete na hora, para o teste acabar. A janela do disjuntor no `application.yml` continua curta (4 chamadas, aberto 2 s); o desenho usa 50 / 20 / 30 s.

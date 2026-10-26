@@ -24,15 +24,15 @@ Ordem padrão das anotações do Resilience4j: `Retry ( CircuitBreaker ( RateLim
 |---|---|---|
 | **Timeout** (no cliente HTTP) | Sim | Sem limite, um parceiro lento segura a requisição para sempre. `connectTimeout` e timeout de resposta explícitos no cliente HTTP (ex.: 1 s e 2 s, valores iniciais). |
 | **TimeLimiter** | Não, no caminho síncrono | A anotação só funciona com `CompletableFuture`/tipos reativos, e cancelar o futuro não interrompe a chamada bloqueante que roda por baixo. Com MVC + cliente bloqueante, quem corta a espera e libera a thread é o timeout do cliente HTTP. |
-| **CircuitBreaker** | Sim | Parceiro doente: paramos de chamar por um tempo e respondemos rápido, em vez de empilhar 10 mil esperas de 2 s. Conta como falha: 5xx, timeout e erro de conexão. Não conta: recusa do cartão (402), nem `BulkheadFullException`, nem `RequestNotPermitted`. Essas duas saem antes da chamada. |
-| **Retry** | Sim, restrito | Só erro de conexão antes de enviar (`ConnectException`) e 503/429, sempre com a mesma chave de idempotência. Máximo 3 tentativas, backoff exponencial com jitter. Nunca repete timeout de leitura nem 500, nem 4xx. |
+| **CircuitBreaker** | Sim | Parceiro doente: paramos de chamar por um tempo e respondemos rápido, em vez de empilhar 10 mil esperas de 2 s. Conta como falha: 5xx, timeout e erro de conexão. Não conta: recusa do cartão (402: a chamada saiu), nem `BulkheadFullException`, nem `RequestNotPermitted`. Essas duas saem antes da chamada. |
+| **Retry** | Sim, restrito | Só erro de conexão antes de enviar (`ConnectException`) e 503/429, sempre com a mesma chave. No máximo 3 chamadas, contando a primeira. Se as três voltarem 503 ou 429, grava `PENDENTE`. Nunca repete timeout de leitura nem 500, nem 4xx. |
 | **Bulkhead** (semáforo) | Sim | Limita chamadas simultâneas ao parceiro (ex.: 200). Semáforo, não pool de threads: com threads virtuais, não há pool a proteger. |
 | **RateLimiter** | Sim, na saída | A cota do contrato é um número para a frota inteira. Cada réplica fica com `cota / número de réplicas`, e o gateway segura a cota cheia. Exemplo: contrato de 500/s e 10 réplicas → 50/s em cada uma, e 500/s no gateway. Na entrada, limite por cliente com 429 é opcional, de preferência nesse mesmo gateway. |
 
 Fallback: na dúvida, nega; falha nunca vira "aprovado".
 
 - Circuito aberto, bulkhead cheio ou rate limit estourado: sabemos que não chamamos o parceiro. Responde `503` com `Retry-After`; o cliente pode tentar de novo com a mesma chave.
-- Timeout ou 500 depois de enviar: não sabemos se cobrou. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`). A única exceção é a [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento): o webhook de captura depois de `EXPIRADO` muda `pagamento.status` de `EXPIRADO` para `APROVADO`, e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
+- Timeout ou 500 depois de enviar: não sabemos se cobrou. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`). A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 
 Valores iniciais de exemplo, a calibrar com métrica real (p99 do parceiro, taxa de erro).
 
@@ -74,7 +74,7 @@ A chave é da intenção, não da tentativa. O cliente gera um UUID quando o usu
 1. Chega: o servidor tenta `INSERT` em `idempotency_keys (chave, hash_do_corpo, status=EM_PROCESSAMENTO, resposta=null, expira_em)`. A chave é `UNIQUE`: a gravação atômica decide quem é o primeiro.
 2. Repetição: mesma chave + mesmo hash e já concluída → devolve a resposta guardada, com o status original (201, 402 ou 202; se era 202, devolve o estado atual do pagamento). Mesma chave + corpo diferente → `422`. Ainda `EM_PROCESSAMENTO` → `409`, sem chamar o parceiro.
 3. Parceiro: a mesma chave (ou o `orderId` derivado dela) vai no `Idempotency-Key` do parceiro.
-4. Falha sem cobrança (503 em que o parceiro não foi chamado: circuito aberto, bulkhead cheio ou rate limit): a chave é liberada e não nasce linha em `pagamento`. Falha ambígua (timeout ou 500 depois de enviar): grava o pagamento `PENDENTE` e a chave fica ligada a ele.
+4. 503 ou 429 do parceiro: no máximo 3 chamadas, contando a primeira, com a mesma chave. Se as três voltarem assim, grava `PENDENTE` e a chave fica ligada a ele. 503 em que a chamada não saiu (circuito aberto, bulkhead cheio ou cota): libera a chave e não nasce linha. Timeout ou 500, sem repetir: grava `PENDENTE`.
 5. Expira: TTL de 24 h. Depois disso a linha pode ser apagada, mas o `order_id` único na tabela de pagamentos continua barrando a segunda cobrança do mesmo pedido.
 
 Um prazo (`travado_ate`) no `EM_PROCESSAMENTO` evita chave presa se a réplica cair no meio da chamada. Vencido o prazo, a reconciliação consulta o parceiro pela mesma chave. Se ele tiver a cobrança, grava o pagamento (final ou `PENDENTE`). Se não tiver, libera a chave. Não se grava `PENDENTE` antes de saber que a chamada saiu.
@@ -112,12 +112,12 @@ sequenceDiagram
   end
 ```
 
-Este diagrama é o caminho síncrono (cartão), antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce quando o QR é criado, na Aula 4. A exceção `EXPIRADO` → `APROVADO` está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). Sem linha e com cobrança no parceiro, a reconciliação insere a linha. Com linha `PENDENTE`, só fecha.
+Este diagrama é o caminho síncrono (cartão), antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce quando o QR é criado, na Aula 4. Três respostas 503 ou 429 do parceiro gravam `PENDENTE`; não caem no ramo que libera a chave. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). Sem linha e com cobrança no parceiro, a reconciliação insere a linha. Com linha `PENDENTE`, só fecha.
 
 <a id="testes"></a>
 ## Testes
 
-WireMock no lugar do parceiro, num teste de integração com o Spring de verdade (as anotações moram no proxy; teste de unidade com `new` não pega). Para falha de rede real, Testcontainers + Toxiproxy (latência, `reset_peer`). Cada teste nasce vermelho: escrito antes da configuração, tem de falhar sem ela.
+WireMock no lugar do parceiro, num teste de integração com o Spring de verdade (as anotações moram no proxy; teste de unidade com `new` não pega). Para falha de rede real, Testcontainers (sobe o programa de verdade) e Toxiproxy (estraga a rede de propósito: latência, `reset_peer`). O teste falha até a configuração existir.
 
 | Cenário injetado | O que o teste afirma |
 |---|---|

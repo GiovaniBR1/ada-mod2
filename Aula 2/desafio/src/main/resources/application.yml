@@ -5,16 +5,22 @@ spring:
 
 parceiro:
   base-url: http://localhost:9999   # nos testes, trocado pela URL do WireMock
-  connect-timeout: 500ms            # tempo máximo para ABRIR a conexão
-  read-timeout: 1s                  # tempo máximo esperando a RESPOSTA (corta o parceiro lento)
+  connect-timeout: 1s              # tempo máximo para ABRIR a conexão
+  read-timeout: 2s                 # tempo máximo esperando a RESPOSTA (corta o parceiro lento)
   retry-after-segundos: 2
 
 resilience4j:
+  retry:
+    instances:
+      parceiro:
+        max-attempts: 3            # inclui a primeira chamada; PagamentoService.MAX_CHAMADAS
   circuitbreaker:
     instances:
       parceiro:
+        # Janela curta para o teste acabar: 4 chamadas e 2 s aberto.
+        # O desenho (anexo) usa 50 chamadas, 20 no mínimo, lenta a 1500 ms / 60%, aberto 30 s, 5 em half-open.
         sliding-window-type: COUNT_BASED
-        sliding-window-size: 4              # olha as últimas 4 chamadas (pequeno para abrir rápido)
+        sliding-window-size: 4
         minimum-number-of-calls: 4
         failure-rate-threshold: 50          # 50% de falha -> OPEN
         slow-call-duration-threshold: 900ms

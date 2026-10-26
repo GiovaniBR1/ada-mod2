@@ -45,7 +45,11 @@ public class ParceiroClient {
                     .retrieve()
                     .body(CobrancaParceiroResponse.class);
         } catch (RestClientResponseException e) {
-            throw new ParceiroErroHttpException(e.getStatusCode().value());
+            int status = e.getStatusCode().value();
+            if (status == 402) {
+                return new CobrancaParceiroResponse(req.id(), "RECUSADO");
+            }
+            throw new ParceiroErroHttpException(status);
         } catch (RestClientException e) {
             // ResourceAccessException (I/O) ou erro ao ler o corpo: olhamos a causa raiz.
             // Achado real nos testes: o read timeout pode estourar já LENDO o corpo e vir embrulhado
