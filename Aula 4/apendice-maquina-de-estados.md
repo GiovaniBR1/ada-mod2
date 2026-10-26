@@ -1,6 +1,6 @@
 # Apêndice: máquina de estados do pedido
 
-Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma situação de dinheiro e de estoque. Se um desenho divergir daqui, vale este arquivo.
+Referência única dos nomes do pedido nas Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma situação de dinheiro e de estoque. Se um nome de pedido divergir daqui, vale este arquivo. O `CHECK` da linha de pagamento está separado por aula, na regra abaixo.
 
 **Resposta curta.** O pedido reserva o estoque antes de cobrar. Cada estado diz, ao mesmo tempo, se o dinheiro se moveu e o que aconteceu com a unidade. Não existe estado "cancelado com Pix retido".
 
@@ -12,7 +12,7 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 
 | Nome que apareceu antes | O que ele era | Nome neste apêndice |
 |---|---|---|
-| `PENDENTE` da Aula 2 | Nome antigo da espera. Não é o estado do pedido. | Ver a [regra única](#linha-de-pagamento). `PENDENTE` só no timeout ou 500 da chamada síncrona. |
+| `PENDENTE` da Aula 2 | Nome da linha de pagamento, não do pedido. | Ver a [regra única](#linha-de-pagamento). Nasce quando a chamada já saiu e a resposta é ambígua ou esgotada. |
 | Espera do Pix na Aula 4 | QR criado, dinheiro ainda não capturado. | Ver a [regra única](#linha-de-pagamento). A linha nasce `AGUARDANDO_CAPTURA`. |
 | `PENDENTE` da Aula 4 e da Aula 6 | Pedido chegou. A reserva ainda não respondeu. Nada foi cobrado. | Continua `PENDENTE`. Na métrica da Aula 6 o rótulo é `ok` (caminho feliz, log de 5%). Não é `verificacao`. Se o prazo estoura e a consulta não fecha, vai para `ESTOQUE_EM_VERIFICACAO`. |
 | `CANCELADO` da Aula 4 | Um rótulo para três situações. | Dividido: `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`, ou nem chega a cancelar (`ESTORNANDO` / `ESTORNO_EM_REVISAO` / `ESTORNO_FALHOU`). |
@@ -25,11 +25,11 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 <a id="linha-de-pagamento"></a>
 ## Regra única da linha de pagamento
 
-Vale para as Aulas 2, 3 e 4. O `CHECK` é o mesmo nas três:
+O dinheiro segue a mesma história nas Aulas 2, 3 e 4. O `CHECK` não. "Vale este arquivo" não troca o `CHECK` do cartão pelo do QR.
 
-`CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`
-
-- Chamada síncrona (cartão, Aulas 2 e 3, antes do Pix com QR): resultado claro grava `APROVADO` ou `RECUSADO` depois da resposta. `PENDENTE` existe só quando a chamada já saiu e a resposta é ambígua (timeout ou 500). 503 em que o parceiro não foi chamado não cria linha. O diagrama dessas aulas é esse caminho e aponta para cá. O pedido, enquanto a linha está `PENDENTE`, fica em `PAGAMENTO_EM_VERIFICACAO`.
+- Cartão síncrono (Aulas 2 e 3): `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`. Ainda não existe `AGUARDANDO_CAPTURA`.
+- Aula 4, com QR: `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`.
+- A linha nasce `PENDENTE` quando a chamada já saiu e a resposta é ambígua ou esgotada. Entram timeout, 500, ou 503/429 depois das 3 tentativas. Chamada que não saiu não cria linha. Resultado claro grava `APROVADO` ou `RECUSADO`. O pedido, enquanto a linha está `PENDENTE`, fica em `PAGAMENTO_EM_VERIFICACAO`.
 - Pix com QR (Aula 4): a linha nasce `AGUARDANDO_CAPTURA`, com `txid`, quando o QR é criado. O pedido fica `AGUARDANDO_PAGAMENTO` por até 15 min. O webhook de captura leva a `APROVADO`. Quinze minutos sem captura: a linha vai para `EXPIRADO` e o pedido para `CANCELADO_SEM_COBRANCA`.
 - Estado final da linha (`APROVADO`, `RECUSADO`, `EXPIRADO`) não muda. A única exceção: o webhook de captura que chega com a linha já em `EXPIRADO` muda `pagamento.status` de `EXPIRADO` para `APROVADO`. O pedido que está em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
 
@@ -70,6 +70,7 @@ stateDiagram-v2
   PAGO --> CONFIRMACAO_EM_VERIFICACAO: confirmação sem resposta no prazo
   CONFIRMACAO_EM_VERIFICACAO --> CONCLUIDO: consulta achou reserva confirmada
   CONFIRMACAO_EM_VERIFICACAO --> ESTORNANDO: consulta diz reserva rejeitada
+  CANCELADO_SEM_COBRANCA --> [*]
   CANCELADO_SEM_COBRANCA --> ESTORNANDO: Pix chegou depois do cancelamento
   ESTORNANDO --> CANCELADO_COM_ESTORNO: Pix devolvido
   ESTORNANDO --> ESTORNO_EM_REVISAO: 5 tentativas sem confirmação
@@ -87,5 +88,5 @@ Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = v
 1. O relógio de `prazo_passo` varre todo estado que não é fim quando o prazo vence. Isso inclui `PAGO` (ex.: 30 s). Não é o job de 5 min.
 2. O job **não cria mensagem nova**. Reenvia o mesmo comando: o mesmo `message_id` (chave estável `pedido_id` + tipo do passo) e a mesma chave de negócio (no estorno, o id do pagamento). Um `message_id` novo passaria na chave de `mensagens_processadas` e executaria o efeito outra vez.
 3. Timeout não é falha. Antes de decidir, o job consulta o participante (Estoque pela reserva, PSP pelo pagamento ou pelo estorno). Status desconhecido cai no estado `*_EM_VERIFICACAO` correspondente. Não confirma, não cancela e não estorna no escuro.
-4. Estorno: até 5 tentativas, com espera 1 s, 5 s, 30 s, 2 min, 10 min em `proxima_tentativa_em`, e um poll curto o bastante para a espera de 1 s, sempre a mesma chave. Na quinta sem confirmação, `ESTORNO_EM_REVISAO`, mensagem na DLQ e chamado. O cliente vê "devolução em análise".
+4. Estorno, sempre a mesma chave. Falha 1 espera 1 s. Falha 2 espera 5 s. Falha 3 espera 30 s. Falha 4 espera 2 min. A falha 5 abre `ESTORNO_EM_REVISAO`, com mensagem na DLQ e chamado. Não há quinta espera. Poll é uma consulta repetida, curta o bastante para a espera de 1 s. O cliente vê "devolução em análise".
 5. O job de 5 min só olha a revisão de 24 h e a consulta diária. 24 h em `ESTORNO_EM_REVISAO` sem confirmação: `ESTORNO_FALHOU`. O chamado continua. A consulta diária ainda pode concluir a devolução. As cinco tentativas abrem a revisão; as 24 h impedem que a revisão não tenha fim. Uma não substitui a outra.

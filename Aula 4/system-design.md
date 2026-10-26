@@ -2,7 +2,7 @@
 
 > **Cenário.** Três serviços, três bancos. Checkout guarda pedidos. Pagamento fala com o PSP (o provedor do Pix). Estoque guarda a unidade. O cliente pagou a TV e o estoque acabou. A carga é 5.000 checkouts por segundo, e milhões abrem "Meus Pedidos".
 
-A chave contra o clique duplo, o disjuntor e o timeout do parceiro continuam. O estoque continua no `UPDATE` condicional, com bulkhead antes do banco. `PENDENTE` na linha de pagamento é só timeout ou 500.
+A chave contra o clique duplo, o disjuntor e o timeout do parceiro continuam. O estoque continua no `UPDATE` condicional, com bulkhead antes do banco. A linha nasce `PENDENTE` quando a chamada já saiu e a resposta é ambígua ou esgotada (timeout, 500, ou 503/429 depois das 3 tentativas).
 
 Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estados.md).
 
@@ -34,7 +34,8 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
 - **Estados do Pedido:**
   > Reservamos antes de cobrar. Reserva e QR vencem juntos, em 15 min. Sem unidade, para sem cobrar.
   > Os doze estados: `PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`.
-  > Sem estoque termina `CANCELADO_SEM_COBRANCA`. Pix devolvido termina `CANCELADO_COM_ESTORNO`.
+  > Nada cobrado: `PENDENTE` e `ESTOQUE_EM_VERIFICACAO`. Pix gerado, reserva ativa: `AGUARDANDO_PAGAMENTO` e `PAGAMENTO_EM_VERIFICACAO`.
+  > Capturado: `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU` e `CANCELADO_COM_ESTORNO`. Sem captura no fim: `CANCELADO_SEM_COBRANCA`.
   > A troca exige o estado anterior. Zero linhas é mensagem velha. A exceção do Pix atrasado está no [apêndice](apendice-maquina-de-estados.md#linha-de-pagamento).
   > `PAGO` espera o passo seguinte, por exemplo 30 s. Sem prazo, um pedido cobrado fica cobrado para sempre. [Apêndice](apendice-maquina-de-estados.md).
 - **Detalhamento dos Fluxos:**
@@ -48,8 +49,8 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
 - **E se a compensação falhar ou oscilar?**
   > Um estorno por pagamento, do valor total. A chave no PSP é o id do pagamento. `UNIQUE (pagamento_id)` impede o segundo.
   > A chamada HTTP do estorno espera no máximo 3 s. Timeout não diz se o PSP devolveu. Antes de repetir, consulta o estorno pela mesma chave. Esse 3 s não é a espera de 5 s em `proxima_tentativa_em`.
-  > As esperas ficam em `proxima_tentativa_em`: 1 s, 5 s, 30 s, 2 min e 10 min. Um poll curto alcança a de 1 s.
-  > Na quinta falha, vai para `ESTORNO_EM_REVISAO`, com mensagem na DLQ (a fila do que não fechou) e um chamado.
+  > Falha 1 espera 1 s. Falha 2 espera 5 s. Falha 3 espera 30 s. Falha 4 espera 2 min. A falha 5 abre a revisão.
+  > Poll é uma consulta repetida, curta o bastante para a espera de 1 s. Não há quinta espera. A revisão leva mensagem à DLQ (a fila do que não fechou) e abre um chamado.
   > 24 h sem confirmação: `ESTORNO_FALHOU`. O job de 5 min só olha essa revisão e a consulta diária. Se o PSP confirmar, fecha `CANCELADO_COM_ESTORNO` sem outra devolução.
   > `PAGO` usa o `prazo_passo` (ex.: 30 s). Não entra nesse job.
 - **Atomicidade entre Estado e Mensageria (Dual Write):**
@@ -61,7 +62,7 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
 ### 2.3 Modelo de Dados (o que a Saga acrescenta)
 
 > Cada tabela mora no banco do seu serviço. `estorno_pendente` é verdadeiro só em `ESTORNANDO`, `ESTORNO_EM_REVISAO` e `ESTORNO_FALHOU`.
-> `CHECK` do pagamento: `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`. O do estorno: `SOLICITADO`, `CONCLUIDO`, `FALHOU`, no máximo 5 tentativas. [Anexo, modelo](anexo-detalhes.md#modelo).
+> `CHECK` desta aula: `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`. As Aulas 2 e 3 ficam nos quatro do cartão. O estorno: `SOLICITADO`, `CONCLUIDO`, `FALHOU`, no máximo 5 tentativas. [Anexo, modelo](anexo-detalhes.md#modelo).
 
 ## 3. Desacoplamento com CQRS e Estratégia de Testes
 

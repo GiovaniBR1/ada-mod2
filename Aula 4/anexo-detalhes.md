@@ -1,6 +1,6 @@
 # Anexo da Aula 4 — fluxos, modelo e testes
 
-O texto principal responde cada pergunta em poucas linhas. O diagrama e a regra da linha de pagamento estão no [apêndice](apendice-maquina-de-estados.md).
+O diagrama e a regra da linha de pagamento estão no [apêndice](apendice-maquina-de-estados.md).
 
 <a id="fluxos"></a>
 ## Fluxos
@@ -24,7 +24,7 @@ Caminho de falha e compensação (o incidente).
 
 Pix que chega tarde: [regra única](apendice-maquina-de-estados.md#linha-de-pagamento).
 
-Quem varre o que parou. Cada passo feliz é disparado por um evento. O relógio de `prazo_passo` varre todo estado que não é fim com o prazo vencido, inclusive `PAGO` (ex.: 30 s sem resposta do Estoque). Não é o job de 5 min. O estorno espera em `proxima_tentativa_em` (1 s, 5 s, 30 s, 2 min, 10 min), com poll curto para a espera de 1 s. O job de 5 min só vê a revisão de 24 h e a consulta diária. O varredor de `prazo_passo` não grava mensagem nova: reenvia o mesmo comando, com o mesmo `message_id` (chave estável `pedido_id` + tipo do passo, não um uuid novo) e a mesma chave de negócio. Um id novo passaria na PK de `mensagens_processadas` e executaria o efeito outra vez. Em `PAGO`, ele consulta a reserva: confirmada vira `CONCLUIDO`; rejeitada vai para `ESTORNANDO`; desconhecida vai para `CONFIRMACAO_EM_VERIFICACAO` e não estorna enquanto o estoque for desconhecido.
+Quem varre o que parou. Cada passo feliz é disparado por um evento. O relógio de `prazo_passo` varre todo estado que não é fim com o prazo vencido, inclusive `PAGO` (ex.: 30 s sem resposta do Estoque). Não é o job de 5 min. O estorno espera em `proxima_tentativa_em`: falha 1 espera 1 s, falha 2 espera 5 s, falha 3 espera 30 s, falha 4 espera 2 min, e a falha 5 abre a revisão. Poll é uma consulta repetida, curta o bastante para a espera de 1 s. Não há quinta espera. O job de 5 min só vê a revisão de 24 h e a consulta diária. O varredor de `prazo_passo` não grava mensagem nova: reenvia o mesmo comando, com o mesmo `message_id` (chave estável `pedido_id` + tipo do passo, não um uuid novo) e a mesma chave de negócio. Um id novo passaria na PK de `mensagens_processadas` e executaria o efeito outra vez. Em `PAGO`, ele consulta a reserva: confirmada vira `CONCLUIDO`; rejeitada vai para `ESTORNANDO`; desconhecida vai para `CONFIRMACAO_EM_VERIFICACAO` e não estorna enquanto o estoque for desconhecido.
 
 <a id="modelo"></a>
 ## Modelo
