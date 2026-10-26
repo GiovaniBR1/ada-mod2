@@ -78,7 +78,7 @@ class Pagamento {
 }
 ```
 
-O Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Zero linhas viram `OptimisticLockException` (`ObjectOptimisticLockingFailureException`). A cláusula `AND status = 'PENDENTE'` segura o caminho sem JPA. A única exceção é a regra única: webhook de captura com a linha em `EXPIRADO` grava `APROVADO`.
+O Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Zero linhas viram `OptimisticLockException` (`ObjectOptimisticLockingFailureException`). A cláusula `AND status = 'PENDENTE'` segura o caminho sem JPA. A exceção do Pix atrasado está na regra única.
 
 <a id="estoque"></a>
 ## Estoque
@@ -172,7 +172,7 @@ Não aprovar um índice por coluna.
 <a id="diagrama"></a>
 ## Diagrama
 
-Caminho síncrono, antes do Pix com QR. `AGUARDANDO_CAPTURA` e a exceção `EXPIRADO` → `APROVADO` estão na regra única.
+Caminho síncrono, antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce com o QR. A exceção do Pix atrasado está na regra única da Aula 4.
 
 ```mermaid
 sequenceDiagram
@@ -201,7 +201,7 @@ sequenceDiagram
 <a id="testes"></a>
 ## Testes
 
-Testcontainers com PostgreSQL 17. H2 ou mock não mostram lock de linha, `CHECK` nem plano. Cada teste nasce vermelho.
+Testcontainers com PostgreSQL 17. H2 ou mock não mostram lock de linha, `CHECK` nem plano. O teste falha até a configuração existir.
 
 | Cenário | O que o teste afirma |
 |---|---|

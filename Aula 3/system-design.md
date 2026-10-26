@@ -1,8 +1,8 @@
-# Template de System Design: Aula 03 - Banco de Dados em Larga Escala
+# System Design: Aula 03 - Banco de Dados em Larga Escala
 
 > **Cenário:** Black Friday. Dinheiro é ACID (grava tudo ou nada). Catálogo pode atrasar. Estoque: muita gente na última unidade. p99 em 4,8 s (99 em 100 foram mais rápidas) e pool cheio. A consulta usa `customer_id` e `order_status = 'processing'`.
 
-Aqui entram JPA, PostgreSQL 17 e Flyway (mudanças de tabela).
+Aqui entram JPA (a biblioteca Java que mapeia objeto em tabela), PostgreSQL 17 e Flyway (mudanças de tabela).
 
 Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 
@@ -27,14 +27,14 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
 - **Impacto no Armazenamento:**
   > A chave é UUIDv7, gerada no Java, em `uuid` de 16 bytes. UUIDv7: um id que cresce com o tempo.
   > Sequence pede um contador central. `IDENTITY` desliga o lote do Hibernate. UUIDv4 espalha o `INSERT` e parte a página da B-Tree no meio. B-Tree: a árvore ordenada do índice.
-  > Em 300 mil linhas, a chave aleatória gerou 22 MB. A sequencial gerou 6,6 MB. O v7 cresce à direita, e o id existe antes do `INSERT`.
-  > O v7 mostra o horário. Quem não é dono recebe 404. A Idempotency-Key segue o UUID do cliente, por 24 h. [Chave](anexo-detalhes.md#chave).
+  > Em 300 mil linhas, o índice da chave aleatória em texto ficou em 22 MB; o da chave sequencial, em 6,6 MB. Parte da diferença é o tamanho do texto. O v7 cresce à direita, e o id existe antes do `INSERT`.
+  > O v7 mostra o horário de criação. Quem não é dono do pedido recebe 404. A Idempotency-Key segue o UUID do cliente, por 24 h. [Chave](anexo-detalhes.md#chave).
 
 ### 1.3 Modelo de Dados (campos principais)
 
 - **Tabelas da compra:**
   > Id é `uuid` v7. Dinheiro é `numeric(12,2)`. Status é `text` com `CHECK` (o banco recusa valor fora da lista).
-  > O pagamento tem `UNIQUE (chave)` e `UNIQUE (order_id)`.
+  > A chave de idempotência tem `UNIQUE (chave)` em `idempotency_keys`. O pagamento tem `UNIQUE (order_id)`.
   > `pagamento.status`: `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`. É o cartão síncrono, antes do Pix com QR.
   > `order_status` nesta aula: `PENDENTE` e `PAGAMENTO_EM_VERIFICACAO`. `processing` e `delivered` são o valor antigo do exercício, só na consulta do incidente.
   > A mesma coluna depois se chama `status` e ganha os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Uma coluna só. [Modelo](anexo-detalhes.md#modelo).
@@ -48,7 +48,7 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
   > A escolha é lock otimista (`@Version`): não trava a linha, confere a versão ao gravar.
   > Zero linhas viram `OptimisticLockException`. Quem perde relê e não reabre o que fechou.
   > `AND status = 'PENDENTE'` segura o caminho normal. Esse `PENDENTE` é só timeout ou 500 na linha de pagamento.
-  > Exceção: webhook com a linha em `EXPIRADO` grava `APROVADO`. [Pagamento](anexo-detalhes.md#pagamento).
+  > A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). [Pagamento](anexo-detalhes.md#pagamento).
 
 ### 2.2 Controle de Estoque Concorrente (Alta contenção no mesmo registro)
 
@@ -58,7 +58,7 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
   > Só baixa se ainda houver unidade. Zero linhas viram 409. `CHECK (disponivel >= 0)` é a segunda trava. A chamada ao parceiro fica fora da transação.
   > Essa transação grava a chave, o pedido `PENDENTE` e a reserva `ATIVA`, e então baixa o estoque. Não grava pagamento.
   > A seguinte grava o pagamento: `APROVADO` ou `RECUSADO`. Timeout ou 500 deixam a linha `PENDENTE` e o pedido em `PAGAMENTO_EM_VERIFICACAO`. 503 sem chamada não cria linha.
-  > Lock de cerca de 4 ms: cerca de 250 compras/s num produto (1000 ÷ 4). Bulkhead de 8 vagas por réplica devolve 503 em 50 ms. [Estoque](anexo-detalhes.md#estoque).
+  > Os 4 ms são hipótese, não uma medida: 1000 ÷ 4 ms ≈ 250 compras/s num produto. Bulkhead de 8 vagas por réplica devolve 503 em 50 ms. [Estoque](anexo-detalhes.md#estoque).
 
 ### 2.3 Riscos e Mitigações
 
@@ -83,13 +83,13 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
 - **Seu Posicionamento:**
   > Não aprovo. O filtro usa os dois campos juntos. O índice é `(customer_id, order_status)`.
   > `delivered` é valor antigo do exercício, cerca de 90% das linhas. Sozinho, lê a tabela inteira.
-  > Cada índice a mais custa escrita e impede o HOT update (trocar a linha sem reescrever o índice).
+  > Cada índice a mais custa escrita. O HOT update (trocar a linha sem reescrever o índice) se perde só quando muda coluna indexada. Índice numa coluna que ninguém atualiza não bloqueia o HOT.
   > No laboratório, os índices somavam 13 MB contra 12 MB da tabela. O PR exige `EXPLAIN` antes e depois, e `CREATE INDEX CONCURRENTLY`. Índice sem uso sai. [Índices](anexo-detalhes.md#indices).
 
 ## 4. Os Edge Cases (Engenharia do Caos)
 
 1. **E se...** a resposta atrasada e a reconciliação fecharem o mesmo `PENDENTE` com resultados diferentes?
-   - **Resposta do Sistema:** Os dois leem a versão 3. O primeiro grava a 4. O segundo toma `OptimisticLockException` e para. Captura tardia em `EXPIRADO` grava `APROVADO` e leva `CANCELADO_SEM_COBRANCA` a `ESTORNANDO`.
+   - **Resposta do Sistema:** Os dois leem a versão 3. O primeiro grava a versão 4. O segundo toma `OptimisticLockException` e para. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 2. **E se...** o pagamento for recusado ou expirar com a última unidade já reservada?
    - **Resposta do Sistema:** Grava `RECUSADO` ou `EXPIRADO` e libera a reserva se ela está `ATIVA`. Sem linha, a reserva espera a consulta. Cobrança sem linha: a reconciliação insere. Linha `PENDENTE`: só fecha.
 3. **E se...** a migration do índice travar as gravações no pico?
