@@ -25,7 +25,7 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
   > O Checkout manda o comando pelo Kafka e lê a resposta. A mensagem nasce na outbox, na mesma transação do dado. Outbox: a tabela de saída. A chave é `pedido_id`.
   > Há dinheiro, e o desfazer tem ordem. Um lugar sabe o passo, o prazo e o que desfazer. HTTP preso seguraria thread e conexão. Coreografia espalharia "onde está o pedido 123?".
   > O Estoque decide a unidade. O Pagamento decide cobrar e estornar. Ninguém lê o banco do outro.
-  > Se o fluxo crescer, a próxima ferramenta é o Temporal. Hoje bastam `status`, `version` e `prazo_passo`.
+  > Se o fluxo crescer, a próxima ferramenta é o Temporal (motor de saga que guarda passo e prazo fora do nosso processo). Hoje bastam `status`, `version` e `prazo_passo`.
 
 ## 2. Máquina de Estados, Compensação e Confiabilidade
 
@@ -56,7 +56,7 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
   > A outbox nasce na mesma transação. O Debezium (o programa que lê a caixa de saída e publica) publica no Kafka (a fila de mensagens). O serviço não fala com o Kafka.
   > Gravar e publicar depois perde o comando se a rede cai. Publicar antes cria evento de algo que não foi gravado.
   > A entrega é pelo menos uma vez. O consumidor grava o `message_id` junto com o efeito. O job reapresenta o mesmo id.
-  > O feliz tem 7 mensagens: `ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada` e `PedidoConcluido`. A 5.000 pedidos/s, 5.000 × 7 = 35.000 mensagens/s. A outbox é particionada por dia. Apaga a partição, não a linha.
+  > O feliz tem 7 mensagens: `ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada` e `PedidoConcluido`. São 35.000 mensagens/s se os 5.000 pedidos forem caminho feliz. A outbox é particionada por dia. Apaga a partição, não a linha.
 
 ### 2.3 Modelo de Dados (o que a Saga acrescenta)
 

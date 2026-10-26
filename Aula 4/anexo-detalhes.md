@@ -13,7 +13,7 @@ Caminho feliz.
 4. O PSP avisa que o Pix caiu; o Pagamento grava `APROVADO` e `PagamentoAprovado`.
 5. Orquestrador muda para `PAGO` e emite `ConfirmarReserva`. Estoque muda a reserva para `CONFIRMADA` e responde `ReservaConfirmada`.
 6. Orquestrador grava `CONCLUIDO` e emite `PedidoConcluido`.
-São 7 mensagens (`ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada`, `PedidoConcluido`). A 5.000 pedidos/s, 35.000 mensagens/s.
+São 7 mensagens (`ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada`, `PedidoConcluido`). São 35.000 mensagens/s se os 5.000 pedidos forem caminho feliz.
 
 Caminho de falha e compensação (o incidente).
 
@@ -37,7 +37,7 @@ Cada tabela mora no banco do seu serviço. IDs `uuid` v7 e status `text` com `CH
 | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
-| Pagamento | `pagamento` | `id`, `order_id`, `valor numeric(12,2)`, `status text`, `version bigint`, `txid text`, `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (txid)`: id do QR, o webhook acha a linha por ele; `UNIQUE (e2e_id)`: id do Pix no Banco Central, contra confirmação duplicada. `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 2 e 3. O que cada valor significa está na [regra única](apendice-maquina-de-estados.md#linha-de-pagamento). |
+| Pagamento | `pagamento` | `id`, `order_id`, `valor numeric(12,2)`, `status text`, `version bigint`, `txid text`, `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (txid)`: id do QR, o webhook acha a linha por ele; `UNIQUE (e2e_id)`: id do Pix no Banco Central, contra confirmação duplicada. `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`. As Aulas 2 e 3 ainda não têm `AGUARDANDO_CAPTURA`. O que cada valor significa está na [regra única](apendice-maquina-de-estados.md#linha-de-pagamento). |
 | Pagamento | `estorno` | `id`, `pagamento_id`, `valor`, `status`, `tentativas int`, `proxima_tentativa_em` | `UNIQUE (pagamento_id)`: um estorno por pagamento; `CHECK (status IN ('SOLICITADO','CONCLUIDO','FALHOU'))`; `CHECK (tentativas <= 5)`. |
 
 <a id="testes"></a>
