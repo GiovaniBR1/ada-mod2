@@ -16,7 +16,7 @@ class SagaDiagnosticoTest {
         var r = c.finalizar("48213");
 
         assertThat(r.pedido().estado()).isEqualTo(EstadoPedido.CANCELADO_SEM_COBRANCA);
-        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
         assertThat(c.psp.chamadasCobrar()).isZero();
         assertThat(c.psp.chamadasEstornar()).isZero();
         assertThat(c.estoque.chamadasLiberar()).isZero();
@@ -40,7 +40,7 @@ class SagaDiagnosticoTest {
         assertThat(r.pedido().consultasEstoque()).isEqualTo(2);
         assertThat(c.psp.chamadasCobrar()).isZero();
         assertThat(c.psp.chamadasEstornar()).isZero();
-        assertThat(r.pedido().estado()).isNotIn(EstadoPedido.CONFIRMADO, EstadoPedido.CANCELADO_SEM_COBRANCA, EstadoPedido.CANCELADO_COM_ESTORNO);
+        assertThat(r.pedido().estado()).isNotIn(EstadoPedido.CONCLUIDO, EstadoPedido.CANCELADO_SEM_COBRANCA, EstadoPedido.CANCELADO_COM_ESTORNO);
         assertThat(c.logs.linhas()).anyMatch(l -> l.contains("consultando status antes de decidir") && l.contains(r.pedido().traceId()));
         assertThat(TraceContext.parse(c.estoque.ultimoTraceparent()).traceId()).isEqualTo(r.pedido().traceId());
     }
@@ -57,7 +57,7 @@ class SagaDiagnosticoTest {
         assertThat(c.psp.chamadasCobrar()).isZero();
         assertThat(c.psp.chamadasEstornar()).isZero();
         assertThat(c.estoque.chamadasLiberar()).isZero();
-        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
     }
 
     @Test
@@ -73,7 +73,7 @@ class SagaDiagnosticoTest {
         assertThat(r.pedido().consultasPagamento()).isEqualTo(2);
         assertThat(c.psp.chamadasEstornar()).isZero();
         assertThat(c.estoque.chamadasLiberar()).isZero();
-        assertThat(r.pedido().estado()).isNotIn(EstadoPedido.CANCELADO_SEM_COBRANCA, EstadoPedido.CANCELADO_COM_ESTORNO, EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isNotIn(EstadoPedido.CANCELADO_SEM_COBRANCA, EstadoPedido.CANCELADO_COM_ESTORNO, EstadoPedido.CONCLUIDO);
         assertThat(r.corpo()).containsEntry("valorDestePedidoCentavos", 8_000L);
         assertThat(r.corpo()).doesNotContainKey("somaPendenteDoCliente").doesNotContainKey("cpf");
     }
@@ -90,7 +90,7 @@ class SagaDiagnosticoTest {
         assertThat(r.pedido().consultasPagamento()).isEqualTo(1);
         assertThat(c.estoque.chamadasLiberar()).isEqualTo(1);
         assertThat(c.psp.chamadasEstornar()).isZero();
-        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
     }
 
     @Test
@@ -101,13 +101,13 @@ class SagaDiagnosticoTest {
 
         var r = c.finalizar("48213");
 
-        assertThat(r.pedido().estado()).isEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isEqualTo(EstadoPedido.CONCLUIDO);
         assertThat(r.pedido().reservado()).isTrue();
         assertThat(r.pedido().pagamentoCapturado()).isTrue();
         assertThat(r.pedido().consultasPagamento()).isEqualTo(1);
         assertThat(c.psp.chamadasEstornar()).isZero();
         assertThat(c.service.finalizar("48213", "cli-771", 8_000, "FONE-BF", null).pedido().estado())
-                .isEqualTo(EstadoPedido.CONFIRMADO);
+                .isEqualTo(EstadoPedido.CONCLUIDO);
         assertThat(c.psp.chamadasCobrar()).isEqualTo(1);
     }
 
@@ -129,7 +129,7 @@ class SagaDiagnosticoTest {
         assertThat(c.service.aplicarEvento("48213", "ReservaExpirou")).isFalse();
         assertThat(c.psp.chamadasEstornar()).isEqualTo(1);
         assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.CANCELADO_COM_ESTORNO);
-        assertThat(c.service.pedido("48213").estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(c.service.pedido("48213").estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
     }
 
     @Test
@@ -158,7 +158,7 @@ class SagaDiagnosticoTest {
 
         assertThat(r.pedido().estado()).isEqualTo(EstadoPedido.CONFIRMACAO_EM_VERIFICACAO);
         assertThat(c.psp.chamadasEstornar()).isZero();
-        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(r.pedido().estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
         assertThat(r.pedido().pagamentoCapturado()).isTrue();
     }
 
@@ -245,7 +245,7 @@ class SagaDiagnosticoTest {
         var primeiro = c.finalizar("48213");
         var segundo = c.finalizar("48214");
 
-        assertThat(primeiro.pedido().estado()).isEqualTo(EstadoPedido.AGUARDANDO_PIX);
+        assertThat(primeiro.pedido().estado()).isEqualTo(EstadoPedido.AGUARDANDO_PAGAMENTO);
         assertThat(primeiro.corpo()).containsEntry("valorDestePedidoCentavos", 8_000L);
         assertThat(primeiro.corpo()).doesNotContainKey("somaPendenteDoCliente").doesNotContainKey("cpf");
         assertThat(c.limite.somaDoCliente("cli-771")).isEqualTo(8_000L);
@@ -253,7 +253,7 @@ class SagaDiagnosticoTest {
         assertThat(c.psp.chamadasCobrar()).isEqualTo(1);
         assertThat(c.psp.chamadasEstornar()).isZero();
         assertThat(c.estoque.chamadasLiberar()).isEqualTo(1);
-        assertThat(segundo.pedido().estado()).isNotEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(segundo.pedido().estado()).isNotEqualTo(EstadoPedido.CONCLUIDO);
     }
 
     @Test
@@ -265,11 +265,11 @@ class SagaDiagnosticoTest {
         var r = c.finalizar("48213");
         String corpo = r.pedido().pagamentoId() + "|48213|PAGO";
         assertThat(c.service.receberWebhook(corpo, "assinatura-errada").http()).isEqualTo(401);
-        assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.AGUARDANDO_PIX);
+        assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.AGUARDANDO_PAGAMENTO);
         assertThat(c.estoque.chamadasConfirmar()).isZero();
 
         String assinatura = WebhookAssinatura.assinar(c.service.segredoWebhook(), corpo);
-        assertThat(c.service.receberWebhook(corpo, assinatura).pedido().estado()).isEqualTo(EstadoPedido.CONFIRMADO);
+        assertThat(c.service.receberWebhook(corpo, assinatura).pedido().estado()).isEqualTo(EstadoPedido.CONCLUIDO);
         assertThat(c.service.receberWebhook(corpo, assinatura).corpo()).containsEntry("resultado", "repetido");
         assertThat(c.estoque.chamadasConfirmar()).isEqualTo(1);
         assertThat(c.psp.chamadasCobrar()).isEqualTo(1);

@@ -46,7 +46,7 @@ public final class TraceContext {
         return existente == null ? criar() : existente;
     }
 
-    /** Mesmo trace-id, span novo. E assim que o Estoque e o consumidor do evento entram no mesmo trace. */
+    /** Mesmo trace-id, span novo. O Checkout abre um filho para o Estoque e outro para o Pagamento. */
     public TraceContext filho() {
         return new TraceContext(traceId, hex(8), amostrado);
     }

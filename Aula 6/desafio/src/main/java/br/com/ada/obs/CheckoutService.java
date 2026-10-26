@@ -128,7 +128,7 @@ public final class CheckoutService {
         Pedido pedido = pedidos.get(orderId);
         if (pedido == null) return false;
         if ("PagamentoConfirmado".equals(tipo)) {
-            if (pedido.estado() != EstadoPedido.AGUARDANDO_PIX
+            if (pedido.estado() != EstadoPedido.AGUARDANDO_PAGAMENTO
                     && pedido.estado() != EstadoPedido.PAGAMENTO_EM_VERIFICACAO) {
                 return false;
             }
@@ -141,7 +141,7 @@ public final class CheckoutService {
             }
             if (pedido.pagamentoCapturado()
                     && (pedido.estado() == EstadoPedido.CONFIRMACAO_EM_VERIFICACAO
-                    || pedido.estado() == EstadoPedido.CONFIRMADO)) {
+                    || pedido.estado() == EstadoPedido.CONCLUIDO)) {
                 pedido.reservado(false);
                 estornar(pedido);
                 return true;
@@ -155,7 +155,7 @@ public final class CheckoutService {
         for (Pedido pedido : List.copyOf(pedidos.values())) {
             switch (pedido.estado()) {
                 case ESTOQUE_EM_VERIFICACAO -> retomarEstoque(pedido);
-                case PAGAMENTO_EM_VERIFICACAO, AGUARDANDO_PIX -> retomarPagamento(pedido);
+                case PAGAMENTO_EM_VERIFICACAO, AGUARDANDO_PAGAMENTO -> retomarPagamento(pedido);
                 case CONFIRMACAO_EM_VERIFICACAO -> retomarConfirmacao(pedido);
                 case ESTORNO_EM_REVISAO, ESTORNO_FALHOU -> retomarEstorno(pedido, agoraMs);
                 default -> { }
@@ -201,7 +201,7 @@ public final class CheckoutService {
         if (s == Estoque.Status.RESERVADO || s == Estoque.Status.CONFIRMADO) {
             pedido.reservado(true);
             if (s == Estoque.Status.CONFIRMADO) pedido.estoqueConfirmado(true);
-            pedido.estado(EstadoPedido.RECEBIDO);
+            pedido.estado(EstadoPedido.PENDENTE);
             return;
         }
         if (s == Estoque.Status.SEM_SALDO || s == Estoque.Status.NAO_RESERVADO) {
@@ -244,7 +244,7 @@ public final class CheckoutService {
             return;
         }
         if (s == Psp.Status.PIX_GERADO) {
-            pedido.estado(EstadoPedido.AGUARDANDO_PIX);
+            pedido.estado(EstadoPedido.AGUARDANDO_PAGAMENTO);
             log(pedido, "pix gerado; o valor entra no teto de pendente");
             return;
         }
@@ -284,11 +284,11 @@ public final class CheckoutService {
         if (s == Estoque.Status.CONFIRMADO) {
             if (!pedido.reservado()) {
                 pedido.estado(EstadoPedido.CONFIRMACAO_EM_VERIFICACAO);
-                log(pedido, "confirmacao sem reserva conhecida; pedido nao vai para CONFIRMADO");
+                log(pedido, "confirmacao sem reserva conhecida; pedido nao vai para CONCLUIDO");
                 return;
             }
             pedido.estoqueConfirmado(true);
-            pedido.estado(EstadoPedido.CONFIRMADO);
+            pedido.estado(EstadoPedido.CONCLUIDO);
             log(pedido, "pedido confirmado com reserva e pagamento");
             return;
         }
@@ -297,7 +297,7 @@ public final class CheckoutService {
             Estoque.Status deNovo = estoque.confirmar(pedido.orderId(), filho(pedido));
             if (deNovo == Estoque.Status.CONFIRMADO) {
                 pedido.estoqueConfirmado(true);
-                pedido.estado(EstadoPedido.CONFIRMADO);
+                pedido.estado(EstadoPedido.CONCLUIDO);
                 return;
             }
             if (deNovo == Estoque.Status.RESERVA_EXPIROU || deNovo == Estoque.Status.NAO_RESERVADO) {
@@ -369,7 +369,7 @@ public final class CheckoutService {
     }
 
     private void aplicarPago(Pedido pedido) {
-        if (pedido.estado() != EstadoPedido.AGUARDANDO_PIX
+        if (pedido.estado() != EstadoPedido.AGUARDANDO_PAGAMENTO
                 && pedido.estado() != EstadoPedido.PAGAMENTO_EM_VERIFICACAO) {
             return;
         }
@@ -413,7 +413,7 @@ public final class CheckoutService {
             return;
         }
         if (s == Psp.Status.PIX_GERADO) {
-            pedido.estado(EstadoPedido.AGUARDANDO_PIX);
+            pedido.estado(EstadoPedido.AGUARDANDO_PAGAMENTO);
         }
     }
 
@@ -503,7 +503,7 @@ public final class CheckoutService {
         m.put("orderId", pedido.orderId());
         m.put("estado", pedido.estado().name());
         m.put("traceId", pedido.traceId());
-        if (pedido.estado() == EstadoPedido.AGUARDANDO_PIX
+        if (pedido.estado() == EstadoPedido.AGUARDANDO_PAGAMENTO
                 || pedido.estado() == EstadoPedido.PAGAMENTO_EM_VERIFICACAO) {
             m.put("valorDestePedidoCentavos", pedido.centavos());
         }
@@ -512,11 +512,11 @@ public final class CheckoutService {
 
     private static String resultadoDe(EstadoPedido estado) {
         return switch (estado) {
-            case CONFIRMADO -> "ok";
+            case CONCLUIDO -> "ok";
             case CANCELADO_SEM_COBRANCA -> "sem_cobranca";
             case CANCELADO_COM_ESTORNO -> "estornado";
             case ESTORNO_FALHOU -> "estorno_falhou";
-            case AGUARDANDO_PIX -> "pix_pendente";
+            case AGUARDANDO_PAGAMENTO -> "pix_pendente";
             default -> "verificacao";
         };
     }

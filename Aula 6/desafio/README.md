@@ -23,7 +23,7 @@ O que o projeto prova, sem um collector de verdade:
 | PSP mudo, consulta diz pago: segue e confirma | `SagaDiagnosticoTest.pspMudoMasConsultaMostraPagoEEstoqueConfirma` |
 | Reserva expira: exatamente 1 estorno, mesmo com webhook e evento repetidos | `SagaDiagnosticoTest.reservaExpiraEstornaUmaVezMesmoComWebhookEEventoRepetidos` |
 | Confirmação sem resposta: consulta o estoque antes de estornar | `SagaDiagnosticoTest.confirmacaoMudaConsultaAntesDeEstornar` |
-| Confirmação desconhecida: não estorna e não marca `CONFIRMADO` | `SagaDiagnosticoTest.confirmacaoDesconhecidaNaoEstornaNemConfirma` |
+| Confirmação desconhecida: não estorna e não marca `CONCLUIDO` | `SagaDiagnosticoTest.confirmacaoDesconhecidaNaoEstornaNemConfirma` |
 | Estorno sem resposta: job vê "estornado" e não chama o PSP de novo | `SagaDiagnosticoTest.estornoSemRespostaFicaEmRevisaoEJobConcluiSemNovaChamada` |
 | Job não estorna enquanto o status do estorno é desconhecido | `SagaDiagnosticoTest.jobNaoEstornaEnquantoStatusDoPspEDesconhecido` |
 | Dentro de 24 h, uma retentativa; depois de 24 h, `ESTORNO_FALHOU` e a consulta do dia seguinte ainda fecha | `SagaDiagnosticoTest.dentroDoPrazoJobTentaOEstornoUmaVez` e `apos24hSemEstornoAbreAlertaENoDiaSeguinteAConsultaAindaFecha` |

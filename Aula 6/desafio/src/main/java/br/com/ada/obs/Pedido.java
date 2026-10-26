@@ -7,7 +7,7 @@ public final class Pedido {
     private final long centavos;
     private final String traceId;
     private final String traceparent;
-    private EstadoPedido estado = EstadoPedido.RECEBIDO;
+    private EstadoPedido estado = EstadoPedido.PENDENTE;
     private boolean reservado;
     private boolean estoqueConfirmado;
     private boolean pagamentoCapturado;

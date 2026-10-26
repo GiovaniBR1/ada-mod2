@@ -68,7 +68,7 @@ public class SagaCompra {
         String p = m.pedidoId();
         switch (m.tipo()) {
             case "EstoqueReservado" -> bdCheckout.transacao(() -> mudaPedido(p, "AGUARDANDO_PAGAMENTO"), "CobrarPagamento", p);
-            case "EstoqueIndisponivel" -> bdCheckout.transacao(() -> mudaPedido(p, "CANCELADO"), "PedidoCancelado", p);
+            case "EstoqueIndisponivel" -> bdCheckout.transacao(() -> mudaPedido(p, "CANCELADO_SEM_COBRANCA"), "PedidoCanceladoSemCobranca", p);
             case "PagamentoAprovado" -> bdCheckout.transacao(() -> mudaPedido(p, "PAGO"), "ConfirmarReserva", p);
             case "ReservaConfirmada" -> bdCheckout.transacao(() -> mudaPedido(p, "CONCLUIDO"), "PedidoConcluido", p);
             case "ReservaRejeitada" -> bdCheckout.transacao(() -> mudaPedido(p, "ESTORNANDO"), "EstornarPagamento", p);
@@ -81,7 +81,7 @@ public class SagaCompra {
                     bdCheckout.transacao(() -> mudaPedido(p, "ESTORNO_EM_REVISAO"), "AlertaEstorno", p);
                 }
             }
-            case "PagamentoEstornado" -> bdCheckout.transacao(() -> mudaPedido(p, "CANCELADO"), "PedidoCancelado", p);
+            case "PagamentoEstornado" -> bdCheckout.transacao(() -> mudaPedido(p, "CANCELADO_COM_ESTORNO"), "PedidoCanceladoComEstorno", p);
             default -> {}
         }
     }
@@ -130,7 +130,8 @@ public class SagaCompra {
     static void projecao(Msg m) {
         Map<String, String> visivel = Map.of("PedidoCriado", "Processando", "PagamentoAprovado", "Pago, confirmando estoque",
                 "EstornarPagamento", "Produto esgotou, devolvendo seu Pix", "PedidoConcluido", "Confirmado",
-                "PedidoCancelado", "Cancelado (valor devolvido, se houve cobrança)", "AlertaEstorno", "Devolução em análise");
+                "PedidoCanceladoSemCobranca", "Cancelado, nada foi cobrado",
+                "PedidoCanceladoComEstorno", "Cancelado, Pix devolvido", "AlertaEstorno", "Devolução em análise");
         if (visivel.containsKey(m.tipo())) meusPedidos.put(m.pedidoId(), visivel.get(m.tipo()));
     }
 
@@ -194,25 +195,31 @@ public class SagaCompra {
         confere("reserva", reservas.get(p), "CONFIRMADA");
 
         p = cenario("2. O incidente: Pix aprovado, estoque rejeita a confirmação", 1, 0, true, false);
-        confere("status final", pedidos.get(p), "CANCELADO");
+        confere("status final", pedidos.get(p), "CANCELADO_COM_ESTORNO");
+        confere("nao e cancelamento sem cobranca", "CANCELADO_SEM_COBRANCA".equals(pedidos.get(p)), false);
         confere("pagamento", pagamentos.get(p), "ESTORNADO");
         confere("devoluções feitas no PSP", estornosNoPsp.get(p), 1);
 
         p = cenario("3. O estorno falha 2 vezes (PSP instável) e passa na 3ª", 1, 2, true, false);
-        confere("status final", pedidos.get(p), "CANCELADO");
+        confere("status final", pedidos.get(p), "CANCELADO_COM_ESTORNO");
+        confere("nao e cancelamento sem cobranca", "CANCELADO_SEM_COBRANCA".equals(pedidos.get(p)), false);
         confere("devoluções feitas no PSP", estornosNoPsp.get(p), 1);
 
-        p = cenario("4. O estorno falha sempre: para em revisão, nunca em CANCELADO sem devolver", 1, 99, true, false);
+        p = cenario("4. O estorno falha sempre: para em revisão, nunca cancela sem devolver", 1, 99, true, false);
         confere("status final", pedidos.get(p), "ESTORNO_EM_REVISAO");
         confere("pagamento ainda não devolvido", pagamentos.get(p), "APROVADO");
+        confere("nao fechou com estorno", "CANCELADO_COM_ESTORNO".equals(pedidos.get(p)), false);
+        confere("nao fechou sem cobranca", "CANCELADO_SEM_COBRANCA".equals(pedidos.get(p)), false);
 
         p = cenario("5. Relay cai depois de publicar (mensagem duplicada no broker)", 1, 0, true, true);
-        confere("status final", pedidos.get(p), "CANCELADO");
+        confere("status final", pedidos.get(p), "CANCELADO_COM_ESTORNO");
+        confere("nao e cancelamento sem cobranca", "CANCELADO_SEM_COBRANCA".equals(pedidos.get(p)), false);
         confere("devoluções feitas no PSP", estornosNoPsp.get(p), 1);
         confere("mensagens duplicadas ignoradas > 0", duplicadasIgnoradas > 0, true);
 
         p = cenario("6. Sem estoque desde o início: nada é cobrado", 0, 0, false, false);
-        confere("status final", pedidos.get(p), "CANCELADO");
+        confere("status final", pedidos.get(p), "CANCELADO_SEM_COBRANCA");
+        confere("nao e cancelamento com estorno", "CANCELADO_COM_ESTORNO".equals(pedidos.get(p)), false);
         confere("pagamento", pagamentos.get(p), null);
 
         System.out.println(falhas == 0 ? "\nTODOS OS CENÁRIOS PASSARAM" : "\n" + falhas + " VERIFICAÇÃO(ÕES) FALHARAM");

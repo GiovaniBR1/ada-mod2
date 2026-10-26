@@ -2,15 +2,15 @@ package br.com.ada.obs;
 
 /** Estados do pedido. Cancelar sem cobranca e cancelar com estorno sao estados diferentes. */
 public enum EstadoPedido {
-    RECEBIDO(false),
+    PENDENTE(false),
     ESTOQUE_EM_VERIFICACAO(false),
-    AGUARDANDO_PIX(false),
+    AGUARDANDO_PAGAMENTO(false),
     PAGAMENTO_EM_VERIFICACAO(false),
     CONFIRMACAO_EM_VERIFICACAO(false),
     ESTORNO_EM_REVISAO(false),
     /** Prazo de revisao esgotado. O job continua consultando o PSP uma vez por dia. */
     ESTORNO_FALHOU(false),
-    CONFIRMADO(true),
+    CONCLUIDO(true),
     CANCELADO_SEM_COBRANCA(true),
     CANCELADO_COM_ESTORNO(true);
 

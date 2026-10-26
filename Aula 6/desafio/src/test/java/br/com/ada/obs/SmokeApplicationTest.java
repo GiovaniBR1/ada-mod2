@@ -28,7 +28,7 @@ class SmokeApplicationTest {
                 "{\"orderId\":\"48213\",\"clienteRef\":\"cli-771\",\"centavos\":18000,\"skuId\":\"FONE-BF\"}",
                 "application/json", trace, null);
         assertThat(ok.statusCode()).isEqualTo(200);
-        assertThat(ok.body()).contains("CONFIRMADO").contains("48213").doesNotContain("cpf");
+        assertThat(ok.body()).contains("CONCLUIDO").contains("48213").doesNotContain("cpf");
 
         HttpResponse<String> cpf = enviar("/checkout/finalizar",
                 "{\"orderId\":\"48214\",\"clienteRef\":\"cli-771\",\"centavos\":18000,\"skuId\":\"FONE-BF\",\"cpf\":\"39053344705\"}",
@@ -37,7 +37,7 @@ class SmokeApplicationTest {
 
         HttpResponse<String> pedido = get("/checkout/pedidos/48213");
         assertThat(pedido.statusCode()).isEqualTo(200);
-        assertThat(pedido.body()).contains("CONFIRMADO").doesNotContain("somaPendenteDoCliente");
+        assertThat(pedido.body()).contains("CONCLUIDO").doesNotContain("somaPendenteDoCliente");
         assertThat(get("/checkout/pedidos/nao-existe").statusCode()).isEqualTo(404);
 
         String metricas = get("/checkout/metricas").body();
@@ -45,7 +45,7 @@ class SmokeApplicationTest {
 
         HttpResponse<String> webhook = enviar("/webhooks/psp", "pag-48213|48213|PAGO", "text/plain", null, "errada");
         assertThat(webhook.statusCode()).isEqualTo(401);
-        assertThat(get("/checkout/pedidos/48213").body()).contains("CONFIRMADO");
+        assertThat(get("/checkout/pedidos/48213").body()).contains("CONCLUIDO");
     }
 
     private HttpResponse<String> get(String caminho) throws Exception {
