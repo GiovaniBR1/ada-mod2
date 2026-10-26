@@ -84,8 +84,8 @@ Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = v
 
 ## Política de prazo, tentativa e estorno
 
-1. O job de prazos varre todo estado que não é fim e cujo `prazo_passo` venceu. Isso inclui `PAGO`.
+1. O relógio de `prazo_passo` varre todo estado que não é fim quando o prazo vence. Isso inclui `PAGO` (ex.: 30 s). Não é o job de 5 min.
 2. O job **não cria mensagem nova**. Reenvia o mesmo comando: o mesmo `message_id` (chave estável `pedido_id` + tipo do passo) e a mesma chave de negócio (no estorno, o id do pagamento). Um `message_id` novo passaria na chave de `mensagens_processadas` e executaria o efeito outra vez.
 3. Timeout não é falha. Antes de decidir, o job consulta o participante (Estoque pela reserva, PSP pelo pagamento ou pelo estorno). Status desconhecido cai no estado `*_EM_VERIFICACAO` correspondente. Não confirma, não cancela e não estorna no escuro.
-4. Estorno: até 5 tentativas, com espera 1 s, 5 s, 30 s, 2 min, 10 min, sempre a mesma chave. Na quinta sem confirmação, `ESTORNO_EM_REVISAO`, mensagem na DLQ e chamado. O cliente vê "devolução em análise".
-5. 24 h nesse estado sem confirmação: `ESTORNO_FALHOU`. O chamado continua. A consulta diária ainda pode concluir a devolução. As cinco tentativas abrem a revisão; as 24 h impedem que a revisão não tenha fim. Uma não substitui a outra.
+4. Estorno: até 5 tentativas, com espera 1 s, 5 s, 30 s, 2 min, 10 min em `proxima_tentativa_em`, e um poll curto o bastante para a espera de 1 s, sempre a mesma chave. Na quinta sem confirmação, `ESTORNO_EM_REVISAO`, mensagem na DLQ e chamado. O cliente vê "devolução em análise".
+5. O job de 5 min só olha a revisão de 24 h e a consulta diária. 24 h em `ESTORNO_EM_REVISAO` sem confirmação: `ESTORNO_FALHOU`. O chamado continua. A consulta diária ainda pode concluir a devolução. As cinco tentativas abrem a revisão; as 24 h impedem que a revisão não tenha fim. Uma não substitui a outra.

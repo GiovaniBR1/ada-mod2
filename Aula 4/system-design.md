@@ -45,7 +45,7 @@ Fluxos numerados, a tabela do modelo e os cenários de teste estão no [anexo](a
 - **Detalhamento dos Fluxos:**
   > Decisão: o caminho feliz reserva, cobra e confirma. A falha devolve o Pix sem mudar o status do pagamento para outro valor.
   > Por quê: a reserva pode expirar entre o Pix e a confirmação. O dinheiro que entrou depois do cancelamento sem cobrança também precisa voltar.
-  > Exemplo: feliz vai de `PENDENTE` a `CONCLUIDO`, com QR `AGUARDANDO_CAPTURA`, `PagamentoAprovado` e reserva `CONFIRMADA`. No incidente, `ReservaRejeitada` leva a `ESTORNANDO`. A linha de pagamento permanece `APROVADO` e a tabela `estorno` vai a `CONCLUIDO`. Em `SagaCompra.java` o laboratório grava `ESTORNADO` no mapa em memória do pagamento, porque a simulação não tem a tabela `estorno`. Pix tarde em `CANCELADO_SEM_COBRANCA` vai a `ESTORNANDO` na hora. O job reenvia o mesmo `message_id` (`pedido_id` + tipo do passo): reserva confirmada vira `CONCLUIDO`; rejeitada, `ESTORNANDO`; desconhecida, `CONFIRMACAO_EM_VERIFICACAO`, sem estornar no escuro.
+  > Exemplo: feliz vai de `PENDENTE` a `CONCLUIDO`, com QR `AGUARDANDO_CAPTURA`, `PagamentoAprovado` e reserva `CONFIRMADA`. No incidente, `ReservaRejeitada` leva a `ESTORNANDO`. A linha de pagamento permanece `APROVADO` e a tabela `estorno` vai a `CONCLUIDO`. Em `SagaCompra.java` o laboratório grava `ESTORNADO` no mapa em memória do pagamento, porque a simulação não tem a tabela `estorno`. Pix tarde em `CANCELADO_SEM_COBRANCA` vai a `ESTORNANDO` na hora. O relógio de `prazo_passo` reenvia o mesmo `message_id` (`pedido_id` + tipo do passo): reserva confirmada vira `CONCLUIDO`; rejeitada, `ESTORNANDO`; desconhecida, `CONFIRMACAO_EM_VERIFICACAO`, sem estornar no escuro.
   > Passos: [anexo, fluxos](anexo-detalhes.md#fluxos).
 
 ### 2.2 Resiliência da Compensação e Consistência
@@ -53,7 +53,7 @@ Fluxos numerados, a tabela do modelo e os cenários de teste estão no [anexo](a
 - **E se a compensação falhar ou oscilar?**
   > Decisão: um estorno por pagamento, do valor total. A chave enviada ao PSP é o id do pagamento. `UNIQUE (pagamento_id)`.
   > Por quê: timeout não diz se o PSP devolveu. Antes de repetir, o Pagamento consulta o estorno pela mesma chave. Dez repetições devolvem o dinheiro uma vez.
-  > Exemplo: esperas de 1 s, 5 s, 30 s, 2 min e 10 min. Depois da quinta, `ESTORNO_EM_REVISAO`, DLQ e chamado; o cliente vê "devolução em análise". 24 h sem confirmação: `ESTORNO_FALHOU`. O job consulta o PSP uma vez por dia e, se confirmar, fecha `CANCELADO_COM_ESTORNO` sem uma segunda devolução.
+  > Exemplo: esperas de 1 s, 5 s, 30 s, 2 min e 10 min em `proxima_tentativa_em`, com poll curto para a de 1 s. Depois da quinta, `ESTORNO_EM_REVISAO`, DLQ e chamado; o cliente vê "devolução em análise". 24 h sem confirmação: `ESTORNO_FALHOU`. O job de 5 min só cobre essa revisão e a consulta diária; se o PSP confirmar, fecha `CANCELADO_COM_ESTORNO` sem uma segunda devolução. `PAGO` usa `prazo_passo` (ex.: 30 s), não esse job.
 - **Atomicidade entre Estado e Mensageria (Dual Write):**
   > Decisão: outbox na mesma transação local. O Debezium lê o WAL e publica no Kafka. O serviço não fala com o Kafka.
   > Por quê: gravar e depois publicar perde o comando se a rede cai. Publicar antes cria evento de algo que não foi gravado.
