@@ -32,7 +32,7 @@ Volume, decisão: Em produção: 5% é todo o caminho feliz até `CONCLUIDO` (`P
 | `CANCELADO_COM_ESTORNO` | Havia captura e o PSP confirmou o estorno. |
 | `AGUARDANDO_PAGAMENTO` | Pix gerado e ainda não pago. O valor entra no teto de pendente. |
 | `PAGO` | Capturado, confirmação da reserva ainda no prazo. Na métrica entra como `ok`, fora da taxa de erro. |
-| `ESTORNANDO` | Estorno pedido, ainda dentro das cinco tentativas. Na métrica entra como `estornado`, fora da taxa de erro. A taxa fica com `estorno_falhou` e `verificacao`. |
+| `ESTORNANDO` | Estorno pedido, ainda dentro das cinco tentativas. Na métrica entra como `estornado`, fora da taxa de erro. A taxa da série fica com `estorno_falhou` e `verificacao`. |
 | `ESTOQUE_EM_VERIFICACAO` | Estoque mudo e a consulta não fechou. Não cobramos. |
 | `PAGAMENTO_EM_VERIFICACAO` | PSP mudo e a consulta não fechou. Não estornamos e não liberamos a reserva. |
 | `CONFIRMACAO_EM_VERIFICACAO` | Pagamento capturado e a confirmação do estoque não respondeu. Não estornamos enquanto o estoque for desconhecido. |
@@ -80,7 +80,7 @@ Baldes do histograma, em segundos: 0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf. O pa
 | Sinal | O que conta | Nome |
 | :--- | :--- | :--- |
 | Rate | Chamadas por segundo | `rate(checkout_operacao_duracao_seconds_count[1m])` |
-| Errors | Timeout, desistência, estado de verificação, `estorno_falhou` e HTTP 5xx | a mesma série, com `resultado` em `verificacao` ou `estorno_falhou`. `sem_cobranca` é cancelamento sem captura (inclusive estoque esgotado), resultado de negócio, e fica fora da taxa de erro. |
+| Errors | Erro da série é `resultado` em `verificacao` ou `estorno_falhou`; timeout, desistência do aplicativo e HTTP 5xx são contados no contador HTTP `http_server_requests_seconds`, e a taxa de erro do painel soma as duas fontes. | série `checkout_operacao_duracao_seconds` somada a `http_server_requests_seconds`. `sem_cobranca` é cancelamento sem captura (inclusive estoque esgotado), resultado de negócio, e fica fora da taxa de erro. |
 | Duration | p50, p99, fração acima de 1 s, por versão | `histogram_quantile` sobre `checkout_operacao_duracao_seconds_bucket` |
 
 Conta da média de 120 ms, reproduzida por `mediaDe120msEscondeP99De2570ms`:

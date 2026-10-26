@@ -38,7 +38,7 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
 ## 2. Métricas
 
 - **Visão do Cliente (RED):** Quais métricas do Checkout entram no painel? Explique como você mede a duração para que o travamento de uma parte dos clientes não desapareça na média.
-  > Decisão: RED por operação (`finalizar`, `reservar`, `cobrar`, `estornar`, `confirmar`). Erro é timeout, desistência, verificação, `estorno_falhou` e HTTP 5xx. `sem_cobranca` fica fora. Duração é histograma, com p50, p99 e a fração acima de 1 s, por versão.
+  > Decisão: RED por operação (`finalizar`, `reservar`, `cobrar`, `estornar`, `confirmar`). Erro da série é `resultado` em `verificacao` ou `estorno_falhou`; timeout, desistência do aplicativo e HTTP 5xx são contados no contador HTTP `http_server_requests_seconds`, e a taxa de erro do painel soma as duas fontes. `sem_cobranca` fica fora. Duração é histograma, com p50, p99 e a fração acima de 1 s, por versão.
   > Por quê: a média só soma o que já terminou. A tela carregando pode conviver com 120 ms, CPU abaixo de 40% e zero HTTP 500.
   > Exemplo: 9.800 × 0,07 s + 200 × 2,57 s = 1.200; média = 120 ms; p99 = 2,57 s; o balde estima 3,0 s. Alerta de média acima de 300 ms fica em silêncio; o de p99 acima de 800 ms dispara. Pela lei de Little, 588 + 800 = 1.388 em andamento, acima do dobro da base (1.176). A média dos p99 por réplica fica em 790 ms e o p99 do conjunto em 7 s (média geral 238 ms).
   > Conversão (`CONCLUIDO` / `PENDENTE`) alerta abaixo de 0,97 por 3 min. PromQL: [anexo, RED](anexo-detalhes.md#red).
