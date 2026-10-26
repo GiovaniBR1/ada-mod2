@@ -47,4 +47,4 @@ mvn -B verify
 
 `mvn -B verify`: BUILD SUCCESS, 27 testes, 0 falhas (OpenJDK 21.0.12, Maven 3.9.9).
 
-Não rodei o k6. O arquivo `k6/spike-telemetria.js` é o roteiro; as asserções equivalentes estão nos testes Java.
+Não rodei o k6. O arquivo `k6/spike-telemetria.js` só mede a carga. A falha de 2% das chamadas de estoque dormindo 8 s é injetada pelos testes Java dos níveis 1 a 3.

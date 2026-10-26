@@ -1,8 +1,9 @@
-// Roteiro do spike da Aula 6. A prova que roda no `mvn verify` esta nos testes Java
-// (TelemetriaTest e SagaDiagnosticoTest). Este arquivo e o mesmo roteiro para o k6,
-// quando a ferramenta estiver instalada. Nao faz parte do laboratorio opcional da aula.
+// Roteiro do spike da Aula 6. Este script so mede a carga: faz POST em
+// /checkout/finalizar e nao injeta sono. A falha de 2% das chamadas de estoque
+// dormindo 8 s e injetada pelos testes Java dos niveis 1 a 3
+// (TelemetriaTest e SagaDiagnosticoTest). Nao faz parte do laboratorio opcional.
 //
-// O que tem de acontecer, com a falha de 2% no estoque (8 s):
+// O que os testes Java conferem quando a falha esta injetada:
 // 1. O alerta de quantil ou de pedidos em andamento dispara.
 // 2. O alerta de media acima de 300 ms fica em silencio.
 // 3. Um trace lento tem o mesmo trace_id no checkout e no estoque.
@@ -30,9 +31,8 @@ export const options = {
   },
   thresholds: {
     // A media pode continuar perto de 120 ms. Ela nao e o portao.
-    // O portao e a cauda: menos de 2% das chamadas podem passar de 1 s
-    // quando o estoque NAO esta com a falha injetada. Com a falha injetada,
-    // este threshold fica vermelho de proposito: e o alerta que queremos ver.
+    // Este script nao injeta a falha de 8 s. O threshold p(99)<800 vale para a
+    // carga sem essa falha. A falha de 2%/8 s fica nos testes Java.
     http_req_duration: ['p(99)<800'],
   },
 };

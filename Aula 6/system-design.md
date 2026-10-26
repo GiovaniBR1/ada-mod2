@@ -72,7 +72,7 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
   > Decisão: a mesma régua nos quatro níveis. Com o incidente injetado, dispara o p99 ou o trabalho em andamento, e o alerta de média acima de 300 ms fica em silêncio.
   > Por quê: no incidente a média (120 ms), a CPU (abaixo de 40%) e o HTTP 500 ficaram verdes. O cliente viu a tela até o timeout.
   > Nível 1 trava 120 ms, p99 2,57 s, balde 3,0 s, 790 ms contra 7 s, 1.388 em andamento e o tail. Nível 2: sem saldo termina `CANCELADO_SEM_COBRANCA` e um `PagamentoAprovado` atrasado não muda esse estado. Nível 3: o pedido 48213 chega a `CONCLUIDO`, CPF é recusado e webhook sem assinatura volta 401.
-  > Exemplo do nível 4: 2% das chamadas de estoque dormem 8 s. Em até 30 s o quantil ou o em andamento dispara, a média fica em silêncio, e o trace lento tem o mesmo `trace_id` nos três, com Estoque e Pagamento filhos do Checkout. `mvn verify` roda 27 testes (níveis 1 a 3). Enquanto a causa é desconhecida: abortar o canary e, acima do limiar, `503` com a mesma chave. Pedido em verificação não é cancelado. Tabelas: [anexo, testes](anexo-detalhes.md#testes).
+  > Exemplo do nível 4: o k6 só mede a carga. A falha de 2% das chamadas de estoque dormindo 8 s é injetada pelos testes Java dos níveis 1 a 3. Em até 30 s o quantil ou o em andamento dispara, a média fica em silêncio, e o trace lento tem o mesmo `trace_id` nos três, com Estoque e Pagamento filhos do Checkout. `mvn verify` roda 27 testes (níveis 1 a 3). Enquanto a causa é desconhecida: abortar o canary e, acima do limiar, `503` com a mesma chave. Pedido em verificação não é cancelado. Tabelas: [anexo, testes](anexo-detalhes.md#testes).
 
 ## Referências usadas
 
