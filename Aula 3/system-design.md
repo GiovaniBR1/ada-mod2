@@ -49,7 +49,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
   > Decisão: `uuid` v7, dinheiro `numeric(12,2)`, status `text` com `CHECK`. Duas travas: `UNIQUE (chave)` e `UNIQUE (order_id)` no pagamento.
   > O `CHECK` do pagamento é `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`, o mesmo das Aulas 2 e 4. Este desenho é o caminho síncrono, antes do Pix com QR.
   > A reserva nasce `ATIVA` na T1 e só sai uma vez. Cartão recusado encerra o pedido: outro cartão é checkout novo.
-  > O `order_status` do exemplo (`processing`, `delivered`) é a consulta do incidente. O estado vivo da saga é o do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Diagrama: [anexo](anexo-detalhes.md#diagrama).
+  > `order_status` (exemplo `processing`/`delivered`) é o nome da coluna do exercício do incidente. A partir da Aula 4 ela passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. Diagrama: [anexo](anexo-detalhes.md#diagrama).
 
 ---
 
