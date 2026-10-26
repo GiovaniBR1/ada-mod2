@@ -23,7 +23,7 @@ class SagaDiagnosticoTest {
         assertThat(r.pedido().consultasEstoque()).isZero();
         assertThat(emAndamento[0]).isEqualTo(1);
         assertThat(c.service.httpEmAndamento()).isZero();
-        assertThat(c.service.aplicarEvento("48213", "PagamentoConfirmado")).isFalse();
+        assertThat(c.service.aplicarEvento("48213", "PagamentoAprovado")).isFalse();
         assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.CANCELADO_SEM_COBRANCA);
         assertThat(c.psp.chamadasCobrar()).isZero();
     }
@@ -285,7 +285,7 @@ class SagaDiagnosticoTest {
         assertThat(r.pedido().pagamentoId()).isEqualTo("pag-48213");
         r.pedido().estado(EstadoPedido.CANCELADO_SEM_COBRANCA);
 
-        assertThat(c.service.aplicarEvento("48213", "PagamentoConfirmado")).isTrue();
+        assertThat(c.service.aplicarEvento("48213", "PagamentoAprovado")).isTrue();
         assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.ESTORNANDO);
         assertThat(c.service.pedido("48213").pagamentoCapturado()).isTrue();
         assertThat(CheckoutService.resultadoDe(EstadoPedido.PAGO)).isEqualTo("ok");

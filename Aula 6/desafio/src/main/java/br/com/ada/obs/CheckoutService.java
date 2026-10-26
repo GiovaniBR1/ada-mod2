@@ -127,7 +127,7 @@ public final class CheckoutService {
     public boolean aplicarEvento(String orderId, String tipo) {
         Pedido pedido = pedidos.get(orderId);
         if (pedido == null) return false;
-        if ("PagamentoConfirmado".equals(tipo)) {
+        if ("PagamentoAprovado".equals(tipo)) {
             if (pedido.estado() == EstadoPedido.CANCELADO_SEM_COBRANCA) {
                 if (pedido.pagamentoId() == null && !pedido.pagamentoCapturado()) {
                     return false;

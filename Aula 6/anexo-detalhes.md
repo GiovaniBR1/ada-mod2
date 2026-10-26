@@ -58,7 +58,7 @@ O HTTP de finalizar pode responder 202 rápido e o resto seguir num consumidor, 
 
 A chave de partição do Kafka é o `orderId`. O Kafka só garante ordem dentro de uma partição, e a mesma chave cai sempre na mesma partição. Assim, reservar, pagar e confirmar do pedido 48213 são lidos em ordem. A chave `skuId` faria o contrário: os pedidos do produto `FONE-BF` cairiam todos na mesma partição. O teste `chaveSkuCaiNumaParticaoSoEOrderIdEspalha` usa 12 partições (decisão do projeto): `FONE-BF` ocupa 1, e 2.000 `orderId` diferentes ocupam mais de 6. `clienteId` juntaria pedidos diferentes da mesma pessoa. `traceId` separaria os eventos do mesmo pedido se uma retentativa abrisse outro trace.
 
-Transição condicional: `UPDATE ... WHERE estado = 'AGUARDANDO_PAGAMENTO'`. `PagamentoConfirmado` depois de `CANCELADO_SEM_COBRANCA`, com o dinheiro capturado, leva o pedido a `ESTORNANDO`, como no apêndice da Aula 4. O teste `semSaldoCancelaSemCobrancaENaoConfirma` é o outro caso: nada foi capturado, o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
+Transição condicional: `UPDATE ... WHERE estado = 'AGUARDANDO_PAGAMENTO'`. `PagamentoAprovado` depois de `CANCELADO_SEM_COBRANCA`, com o dinheiro capturado, leva o pedido a `ESTORNANDO`, como no apêndice da Aula 4. O teste `semSaldoCancelaSemCobrancaENaoConfirma` é o outro caso: nada foi capturado, o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
 
 Webhook do PSP: o parceiro não conhece o nosso trace. Na criação do pagamento gravamos `pagamentoId = "pag-" + orderId` e o `trace_id` no pedido. O webhook manda `pag-48213|48213|PAGO`, achamos o pedido e a linha nova reusa o `trace_id` original. A assinatura é HMAC-SHA256 do corpo exato, no cabeçalho `X-Assinatura`. Assinatura errada responde 401 e não muda o estado. O mesmo `pagamentoId` na segunda vez responde "repetido" e não confirma o estoque de novo (`webhookPagoConfirmaUmaVezEAssinaturaErradaNaoMudaNada`).
 
@@ -193,7 +193,7 @@ Postmortem, formato blameless do SRE book. Sintoma: tela carregando e conversão
 
 | Situação no `SagaDiagnosticoTest` | Estado | Verificação negativa |
 | :--- | :--- | :--- |
-| Estoque sem saldo | `CANCELADO_SEM_COBRANCA` | nada foi capturado: zero cobranças, zero estornos, e um `PagamentoConfirmado` atrasado não muda o estado |
+| Estoque sem saldo | `CANCELADO_SEM_COBRANCA` | nada foi capturado: zero cobranças, zero estornos, e um `PagamentoAprovado` atrasado não muda o estado |
 | Estoque mudo e consulta desconhecida | `ESTOQUE_EM_VERIFICACAO` | zero cobranças e zero estornos |
 | Consulta diz que não reservou | `CANCELADO_SEM_COBRANCA` | zero cobranças; não há liberação, porque não houve reserva |
 | PSP mudo e consulta desconhecida | `PAGAMENTO_EM_VERIFICACAO` | zero estornos e zero liberações; a resposta não traz a soma pendente nem CPF |
