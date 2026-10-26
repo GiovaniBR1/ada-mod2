@@ -159,7 +159,7 @@ Premissas marcadas como estimativa: 6 spans por pedido (entrada, checkout, reser
 - `CheckoutService.finalizar` no laboratório ainda chama reservar, cobrar e confirmar no mesmo processo, para o teste ver o estado. Isso simula a borda por simplicidade e não é o transporte de produção.
 - Prazo depois de aceito: 7 dias (decisão, seção de LGPD).
 
-O trace-id do inteiro 100, formatado em 32 hex, cai fora do corte de 1% (resto da divisão por 10.000 é 100; o corte é "menor que 100"). Com a decisão no fim, 2,57 s é maior que 0,8 s e o trace é guardado. O mesmo trace-id com 0,07 s e sem erro é descartado. Com erro, é guardado mesmo durando 0,07 s. O teste `headDescartaOTraceLentoETailGuarda` faz essas três conferências. O inteiro 50 cai dentro do 1% e seria guardado mesmo sendo rápido.
+O trace-id do inteiro 100, formatado em 32 hex, cai fora do corte de 1% (resto da divisão por 10.000 é 100; o corte é "menor que 100"). Com a decisão no fim, 2,57 s é maior que 0,8 s e o trace é guardado. O mesmo trace-id com 0,07 s e sem erro é descartado. Com erro, é guardado mesmo durando 0,07 s. O teste `headDescartaOTraceLentoETailGuarda` faz essas três conferências. O inteiro 50 cai dentro do 1% e seria guardado mesmo sendo rápido. `Amostrador.tail` não lê o estado do pedido: o chamador passa `erro=true` para verificação, `ESTORNO_FALHOU` e `ESTORNO_EM_REVISAO`.
 
 ## Testes
 

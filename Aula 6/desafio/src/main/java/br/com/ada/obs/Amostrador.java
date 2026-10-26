@@ -13,7 +13,9 @@ public final class Amostrador {
         return Math.floorMod(h, 10_000) < corte;
     }
 
-    /** Guarda erro, guarda duracao acima do limiar, e ainda guarda uma fracao do resto para a amostra continuar representativa. */
+    /** Guarda erro, guarda duracao acima do limiar, e ainda guarda uma fracao do resto.
+     * Nao le o estado: o chamador passa erro=true para verificacao, ESTORNO_FALHOU e ESTORNO_EM_REVISAO.
+     */
     public boolean tail(String traceId, boolean erro, double duracaoSegundos, double limiarSegundos, double taxaDoResto) {
         if (erro || duracaoSegundos > limiarSegundos) {
             return true;
