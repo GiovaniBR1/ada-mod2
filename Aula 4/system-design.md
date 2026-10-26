@@ -55,12 +55,18 @@
   >   PENDENTE --> AGUARDANDO_PAGAMENTO: estoque reservado (prazo 15 min)
   >   PENDENTE --> CANCELADO_SEM_COBRANCA: sem estoque (nada cobrado)
   >   PENDENTE --> ESTOQUE_EM_VERIFICACAO: reserva sem resposta no prazo
+  >   ESTOQUE_EM_VERIFICACAO --> AGUARDANDO_PAGAMENTO: consulta achou a reserva
+  >   ESTOQUE_EM_VERIFICACAO --> CANCELADO_SEM_COBRANCA: consulta diz que não reservou
   >   AGUARDANDO_PAGAMENTO --> PAGO: Pix confirmado
   >   AGUARDANDO_PAGAMENTO --> CANCELADO_SEM_COBRANCA: Pix não pago no prazo (reserva liberada)
   >   AGUARDANDO_PAGAMENTO --> PAGAMENTO_EM_VERIFICACAO: PSP sem resposta e consulta aberta
+  >   PAGAMENTO_EM_VERIFICACAO --> PAGO: consulta diz pago
+  >   PAGAMENTO_EM_VERIFICACAO --> CANCELADO_SEM_COBRANCA: consulta diz não pago
   >   PAGO --> CONCLUIDO: reserva confirmada
   >   PAGO --> ESTORNANDO: reserva rejeitada (expirou e esgotou)
   >   PAGO --> CONFIRMACAO_EM_VERIFICACAO: confirmação sem resposta no prazo
+  >   CONFIRMACAO_EM_VERIFICACAO --> CONCLUIDO: consulta achou reserva confirmada
+  >   CONFIRMACAO_EM_VERIFICACAO --> ESTORNANDO: consulta diz reserva rejeitada
   >   ESTORNANDO --> CANCELADO_COM_ESTORNO: Pix devolvido
   >   ESTORNANDO --> ESTORNO_EM_REVISAO: 5 tentativas sem confirmação
   >   ESTORNO_EM_REVISAO --> CANCELADO_COM_ESTORNO: PSP confirmou
