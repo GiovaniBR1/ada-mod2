@@ -78,7 +78,7 @@ Baldes do histograma, em segundos: 0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf. O pa
 | Sinal | O que conta | Nome |
 | :--- | :--- | :--- |
 | Rate | Chamadas por segundo | `rate(checkout_operacao_duracao_seconds_count[1m])` |
-| Errors | Timeout, desistência, estado de verificação, HTTP 5xx | a mesma série, com `resultado` em `verificacao`, `estorno_falhou` ou `sem_cobranca` |
+| Errors | Timeout, desistência, estado de verificação, `estorno_falhou` e HTTP 5xx | a mesma série, com `resultado` em `verificacao` ou `estorno_falhou`. `sem_cobranca` é cancelamento sem captura (inclusive estoque esgotado), resultado de negócio, e fica fora da taxa de erro. |
 | Duration | p50, p99, fração acima de 1 s, por versão | `histogram_quantile` sobre `checkout_operacao_duracao_seconds_bucket` |
 
 Conta da média de 120 ms, reproduzida por `mediaDe120msEscondeP99De2570ms`:
