@@ -116,14 +116,13 @@ O laboratório não roda essa procedure. O `V4` em `db/migration` é um `UPDATE`
 
 Antes de seguir: `SELECT count(*) FROM pedido WHERE estado_saga IS NULL` tem de dar 0, e uma consulta compara as duas colunas pelo mapeamento. Só então `ADD CONSTRAINT estado_saga_nn CHECK (estado_saga IS NOT NULL) NOT VALID` e `VALIDATE CONSTRAINT`, que confere sem bloquear as escritas.
 
-Escrita da v2, exemplo:
+Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma manda SQL para uma coluna que não existe.
 
-| status_pagamento (o que a v1.5 lê) | estado_saga (canônico) |
-| :--- | :--- |
-| AGUARDANDO_PIX | AGUARDANDO_PAGAMENTO |
-| CONFIRMADO | CONCLUIDO |
+(a) Backfill de nome, na migração, partindo da coluna antiga já gravada pela v1.5. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO` em `estado_saga`. `CONFIRMADO` vira `CONCLUIDO`.
 
-Se o webhook cair numa réplica v1.5, ela lê `AGUARDANDO_PIX` e grava `PAGO` nas duas colunas. Tradução de verdade no mesmo caminho: a coluna antiga fica `CONFIRMADO` e a nova fica `CONCLUIDO`. Nenhuma das duas manda SQL para uma coluna que não existe.
+(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Ela grava `PAGO` nas duas colunas, porque `PAGO` existe nos dois vocabulários.
+
+(c) Conclusão na v2, partindo do pedido que acabou de ser pago. A coluna antiga fica `CONFIRMADO` e `estado_saga` fica `CONCLUIDO`.
 
 Um script que já rodou nunca é editado. O Flyway guarda o checksum, e `flyway validate` falha se o arquivo mudar. Correção vira script novo.
 
