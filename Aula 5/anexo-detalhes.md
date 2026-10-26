@@ -81,6 +81,7 @@ Zero linha fora do mapa: um token que não está na tabela abaixo faz o script l
 | `CANCELADO` sem captura | `CANCELADO_SEM_COBRANCA` |
 | `CANCELADO` com estorno confirmado | `CANCELADO_COM_ESTORNO` |
 | `CANCELADO` com captura e sem confirmação de estorno | `ESTORNO_EM_REVISAO` |
+| `CANCELADO` com `pagamento.status = PENDENTE` | `PAGAMENTO_EM_VERIFICACAO` |
 | `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`, `ESTORNANDO`, `ESTORNO_EM_REVISAO` | o mesmo token |
 | `ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO` | o mesmo token (já é um dos doze) |
 
@@ -120,7 +121,6 @@ BEGIN
       WHEN 'ESTORNO_EM_REVISAO' THEN 'ESTORNO_EM_REVISAO'
       WHEN 'ESTORNO_FALHOU' THEN 'ESTORNO_FALHOU'
       WHEN 'CANCELADO_COM_ESTORNO' THEN 'CANCELADO_COM_ESTORNO'
-      WHEN 'CANCELADO' THEN estado_saga
     END
     WHERE p.id IN (
       SELECT id FROM pedidos
@@ -132,6 +132,13 @@ BEGIN
     EXIT WHEN n = 0;
     PERFORM pg_sleep(0.05);
   END LOOP;
+  -- legado_cancelado já tem o retorno. Sem retorno, não houve linha de pagamento.
+  INSERT INTO legado_cancelado (order_id, destino)
+  SELECT p.id, 'CANCELADO_SEM_COBRANCA'
+    FROM pedidos p
+   WHERE p.status_pagamento = 'CANCELADO'
+     AND p.estado_saga IS NULL
+     AND NOT EXISTS (SELECT 1 FROM legado_cancelado c WHERE c.order_id = p.id);
   UPDATE pedidos p
      SET estado_saga = c.destino
     FROM legado_cancelado c
@@ -143,12 +150,11 @@ END $$;
 ```
 
 ```sql
--- Banco do Pagamento. Só order_id em cancelado_legado (legado CANCELADO).
--- PENDENTE vai para PAGAMENTO_EM_VERIFICACAO. Copia o resultado para legado_cancelado.
-CREATE OR REPLACE PROCEDURE pagamento_classifica_cancelado()
-LANGUAGE plpgsql AS $$
-BEGIN
-  INSERT INTO classifica_cancelado (order_id, destino)
+-- Banco do Pagamento. Devolve (order_id, destino). Não grava no Checkout.
+-- ids = pedidos CANCELADO. O job copia o retorno em legado_cancelado.
+CREATE OR REPLACE FUNCTION pagamento_classifica_cancelado(ids uuid[])
+RETURNS TABLE (order_id uuid, destino text)
+LANGUAGE sql AS $$
   SELECT g.order_id,
     CASE
       WHEN g.status = 'PENDENTE' THEN 'PAGAMENTO_EM_VERIFICACAO'
@@ -160,11 +166,11 @@ BEGIN
       ELSE 'CANCELADO_SEM_COBRANCA'
     END
   FROM pagamento g
-  JOIN cancelado_legado c ON c.order_id = g.order_id;
-END $$;
+  WHERE g.order_id = ANY (ids);
+$$;
 ```
 
-O laboratório não roda essa procedure. O `V4` em `db/migration` é um `UPDATE` único, aceito pelo H2 em modo PostgreSQL, e copia o valor antigo quando ele não é `CANCELADO`. O teste espera `CONFIRMADO` na coluna nova. Esse `V4` prova a separação do `CANCELADO` e a repetição sem efeito. Não prova o mapa canônico nem o lote com `COMMIT`.
+O laboratório não roda essa função. O `V4` do H2 ainda copia `CONFIRMADO`, porque o teste espera esse token, e não prova este mapa.
 
 Antes de seguir: `SELECT count(*) FROM pedidos WHERE estado_saga IS NULL` tem de dar 0, e uma consulta compara as duas colunas pelo mapeamento. Só então `ADD CONSTRAINT estado_saga_nn CHECK (estado_saga IS NOT NULL) NOT VALID` e `VALIDATE CONSTRAINT`, que confere sem bloquear as escritas.
 

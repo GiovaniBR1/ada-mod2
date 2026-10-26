@@ -23,7 +23,7 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
   > A versão `1.5.0` vem do `pom.xml`. A tag `checkout:1.5.0-<commit>` é imutável. O ambiente aponta para `sha256`.
   > No incidente, `latest` foi sobrescrita e o rollback puxou o binário novo. O registry guarda as últimas 10 versões de produção. O admission (regra do cluster que aceita ou recusa o pod) recusa imagem citada por tag.
   > O `application.yml` só lê `SPRING_DATASOURCE_URL`, `PIX_PSP_URL` e `SPRING_PROFILES_ACTIVE`. Isso é config fora do binário (fator III). Senha e HMAC vêm de Secret, por pull request. HMAC: uma assinatura. Sem a chave, não dá para forjar.
-  > Forma, não um digest real: `registry/checkout@sha256:9b2e7c...f41a`. O rollback reverte o commit do repositório de deploy. As etiquetas OCI aparecem no `/actuator/info`. [Promoção](anexo-detalhes.md#promocao).
+  > O rollback reverte o commit do repositório de deploy. [Promoção](anexo-detalhes.md#promocao).
 
 ## 2. Estratégia de Rollout e Migração de Banco sem Downtime
 
@@ -32,7 +32,7 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 - **A Escolha:** (X) Canary Release (Liberação Gradual por Percentual)  ( ) Blue-Green Deployment (Alternância de Ambientes)
 - **Justificativa e Mitigação das Desvantagens do seu Modelo:**
   > A escolha é canary. Canary: a versão nova recebe uma fatia do tráfego.
-  > Degraus: 1% (~50 TPS, 10 min), 5% (~250 TPS, 10 min), 20% (~1.000 TPS, 15 min), 50% (~2.500 TPS, 15 min), 100%. Só avança com readiness 200.
+  > TPS é pedidos por segundo. Degraus: 1% (~50 TPS, 10 min), 5% (~250 TPS, 10 min), 20% (~1.000 TPS, 15 min), 50% (~2.500 TPS, 15 min), 100%. Só avança com readiness 200.
   > Blue-green dobraria máquina no pico e viraria 100% num clique. O banco continuaria um só.
   > Duas leituras ruins abortam. HTTP 5xx da nova: até 0,5% e até 1,5 vez a estável. p99 não sobe mais de 20%. Zero erro de coluna. Pool abaixo de 80%. No negócio: nasce `CONCLUIDO`, parado além do prazo dispara, e não há `CONCLUIDO` sem reserva.
   > Webhook da estável pode cair na nova. As duas conferem o HMAC e só mudam a linha se status ainda é `AGUARDANDO_CAPTURA` ou `EXPIRADO`. A estável segue pronta para 5.000 TPS.
@@ -41,13 +41,13 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 ### 2.2 Evolução de Schema Sem Downtime e Plano de Rollback
 
 - **Passo a Passo da Migração:**
-  > `pedidos.status` da Aula 4 é o `status_pagamento` deste enunciado. A coluna nova, ao lado, é `estado_saga`.
   > A escolha é expand/contract em três releases. Primeiro acrescenta a coluna. As duas versões convivem. Só depois a antiga sai.
+  > `pedidos.status` da Aula 4 é o `status_pagamento` deste enunciado. A coluna nova, ao lado, é `estado_saga`.
   > A v1 do enunciado só lê a coluna antiga e fica no ar no expand. A v1.5 lê `status_pagamento` e grava as duas. A v2 lê `estado_saga` e também grava as duas. O contract (v2.1, `V12`) tira a antiga fora do pico.
   > A migração é um Job, com usuário próprio, `lock_timeout` de 3 s e `spring.flyway.enabled=false`. A aplicação não tem `ALTER`.
   > `V10` acrescenta `estado_saga` nula. `V11` copia em lotes de 5.000. O backfill roda no banco de cada dono. O Checkout só lê `pedidos`. O Pagamento classifica `CANCELADO` e devolve `(order_id, destino)`.
   > `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO`. `CONFIRMADO` e `CONCLUIDO` são o par que muda de nome. `PAGO` é o mesmo token nas duas colunas. A escrita viva da v1.5 grava `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`.
-  > O H2, no `V4`, ainda copia `CONFIRMADO`, porque o teste espera esse token. Antes de seguir: zero nulos. [Migração](anexo-detalhes.md#migracao).
+  > Antes de seguir: zero nulos em `estado_saga`. [Migração](anexo-detalhes.md#migracao).
 - **Garantia de Rollback Imediato:**
   > A volta é para a v1.5, não para a v1 do enunciado. Nenhuma migração é desfeita.
   > A v1 já saiu antes do canary. A v1.5 ficou no ar, ainda lê `status_pagamento` e já cabe 5.000 TPS. A v2 gravou as duas colunas.
@@ -60,13 +60,13 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 ### 3.1 Gates de Segurança e Guardrails no Processo de Entrega
 
 - **Guardrails do Commit ao Deploy:**
-  > O `RENAME` de `status_pagamento` para no pull request. Entram `mvn -B verify` (JDK 21), gitleaks, CodeQL, hadolint e `flyway validate`.
+  > O `RENAME` de `status_pagamento` para no pull request. Entram `mvn -B verify` (JDK 21), gitleaks (barra segredo no git), CodeQL (busca falha no código), hadolint (confere o Dockerfile) e `flyway validate`.
   > `DROP`, `RENAME` ou `ALTER ... TYPE` reprovam, salvo contract que prove que produção já não lê a coluna. `db/migration/` exige o time de dados. A `main` recusa push direto.
   > No merge, um build: `cosign verify`, SBOM (a lista do que entrou na imagem) e `trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed`. CVE alta alerta e não bloqueia. A imagem sai assinada, com tag imutável.
   > O admission recusa imagem sem assinatura, por tag, como root ou sem SBOM. [Gates](anexo-detalhes.md#gates).
 - **Governança e Controle em Produção:**
-  > Produção só muda por GitOps: o cluster aplica o git. O Argo CD desfaz divergência. Não há `kubectl apply` pessoal. Há promoção de um digest.
-  > A esteira usa OIDC que expira com a execução. A aplicação não tem `ALTER`. Hotfix usa os mesmos gates, uma revisão do plantão e degraus mais curtos.
+  > Produção só muda por GitOps: o cluster aplica o git. O Argo CD (aplica o git no cluster) desfaz divergência. Não há `kubectl apply` pessoal. Há promoção de um digest.
+  > A esteira usa OIDC (login que expira com a execução). A aplicação não tem `ALTER`. Hotfix usa os mesmos gates, uma revisão do plantão e degraus mais curtos.
   > Break-glass (acesso de emergência, fora do caminho normal) dura 1 hora, com justificativa e auditoria. O que foi feito vira pull request. [Governança](anexo-detalhes.md#governanca).
 
 ### 3.2 Estratégia de Testes da Imagem e da Migração
