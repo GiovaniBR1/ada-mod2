@@ -73,7 +73,7 @@ class MigracaoExpandContractTest {
         v2.criar(100, 2500);                                   // criado pela v2 (canary)
         assertThat(v15.statusPagamento(100)).isEqualTo("PENDENTE"); // a v1.5 le sem erro de SQL
         v15.confirmar(100);                                    // rollback: a v1.5 avanca o pedido da v2
-        assertThat(v2.estado(100)).contains(EstadoSaga.CONFIRMADO);
+        assertThat(v2.estado(100)).contains(EstadoSaga.CONCLUIDO);
         assertThat(v15.statusPagamento(100)).isEqualTo("CONFIRMADO");
     }
 

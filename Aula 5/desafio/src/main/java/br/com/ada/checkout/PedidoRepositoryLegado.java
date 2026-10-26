@@ -3,7 +3,7 @@ package br.com.ada.checkout;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
- * Simula a versao estavel v1.5 (release A): le status_pagamento e grava as duas colunas.
+ * Simula a versao estavel v1.5 (release A): le status_pagamento, grava o nome canonico em estado_saga e o token antigo so em status_pagamento.
  * Usada nos testes de coexistencia e de rollback; nao e um bean do Spring.
  */
 public class PedidoRepositoryLegado {
@@ -17,7 +17,7 @@ public class PedidoRepositoryLegado {
     }
 
     public void confirmar(long id) {
-        jdbc.update("UPDATE pedido SET status_pagamento = 'CONFIRMADO', estado_saga = 'CONFIRMADO' "
+        jdbc.update("UPDATE pedido SET status_pagamento = 'CONFIRMADO', estado_saga = 'CONCLUIDO' "
                 + "WHERE id = ? AND status_pagamento = 'PENDENTE'", id);
     }
 }

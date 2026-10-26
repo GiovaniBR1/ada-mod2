@@ -20,7 +20,7 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 | Cinco tentativas de estorno (Aula 4) | O laço automático. Depois da quinta sem confirmação, revisão e chamado. | **Continua valendo.** É o que abre `ESTORNO_EM_REVISAO`. Não foi substituído. |
 | Prazo de 24 h (Aula 6) | Não havia prazo na revisão: o chamado humano podia ficar sem fim. | **Acrescenta o fim da revisão.** 24 h em `ESTORNO_EM_REVISAO` sem confirmação do PSP abrem `ESTORNO_FALHOU`. O chamado segue aberto. O job consulta o PSP uma vez por dia e, se a devolução existir, fecha em `CANCELADO_COM_ESTORNO` sem pedir o estorno de novo. |
 
-`Aula 4/desafio/SagaCompra.java` imprime `CANCELADO_SEM_COBRANCA` quando nada foi cobrado e `CANCELADO_COM_ESTORNO` quando o Pix foi devolvido. A Aula 6 grava `PENDENTE`, `AGUARDANDO_PAGAMENTO` e `CONCLUIDO`. O laboratório da Aula 5, no backfill do H2, ainda copia o token antigo `CONFIRMADO` para `estado_saga` (o teste espera esse valor); no mapa de produção, `CONFIRMADO` vira `CONCLUIDO`.
+`Aula 4/desafio/SagaCompra.java` imprime `CANCELADO_SEM_COBRANCA` quando nada foi cobrado e `CANCELADO_COM_ESTORNO` quando o Pix foi devolvido. A Aula 6 grava `PENDENTE`, `AGUARDANDO_PAGAMENTO` e `CONCLUIDO`. O laboratório da Aula 5, no backfill do H2, ainda copia o token antigo `CONFIRMADO` para `estado_saga` (o teste espera esse valor). A escrita viva da v1.5 grava `CONCLUIDO` em `estado_saga` e `CONFIRMADO` só em `status_pagamento`. No mapa de produção, `CONFIRMADO` vira `CONCLUIDO`.
 
 <a id="linha-de-pagamento"></a>
 ## Regra única da linha de pagamento

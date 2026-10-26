@@ -157,9 +157,9 @@ Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma man
 
 (a) Backfill de nome, na migração, partindo da coluna antiga já gravada pela v1.5. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO` em `estado_saga`. `CONFIRMADO` vira `CONCLUIDO`.
 
-(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Ela grava `PAGO` nas duas colunas, porque `PAGO` existe nos dois vocabulários.
+(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Depois do backfill, a v1.5 grava o nome canônico em `estado_saga` e o token antigo só em `status_pagamento`. Neste passo os dois são `PAGO`.
 
-(c) Conclusão na v2, partindo do pedido que acabou de ser pago. A coluna antiga fica `CONFIRMADO` e `estado_saga` fica `CONCLUIDO`.
+(c) Conclusão, na v1.5 e na v2, partindo do pedido que acabou de ser pago. `estado_saga` fica `CONCLUIDO` e `status_pagamento` fica `CONFIRMADO`. A v1.5 não regrava o token legado em `estado_saga`.
 
 Um script que já rodou nunca é editado. O Flyway guarda o checksum, e `flyway validate` falha se o arquivo mudar. Correção vira script novo. O contract (`V5` no laboratório, `V12` na sequência de produção) fica fora da pasta que o Flyway carrega no pico.
 
