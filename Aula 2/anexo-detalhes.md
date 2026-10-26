@@ -1,6 +1,6 @@
 # Anexo da Aula 2 — padrões, chave e testes
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam a tabela dos padrões, o YAML, o ciclo da chave, o diagrama e os cenários de teste.
+Aqui ficam a tabela dos padrões, o YAML, o ciclo da chave, o diagrama e os cenários de teste.
 
 <a id="paradigma"></a>
 ## Paradigma
@@ -32,7 +32,7 @@ Ordem padrão das anotações do Resilience4j: `Retry ( CircuitBreaker ( RateLim
 Fallback: na dúvida, nega; falha nunca vira "aprovado".
 
 - Circuito aberto, bulkhead cheio ou rate limit estourado: sabemos que não chamamos o parceiro. Responde `503` com `Retry-After`; o cliente pode tentar de novo com a mesma chave.
-- Timeout ou 500 depois de enviar: não sabemos se cobrou. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`).
+- Timeout, 500, ou 503/429 depois das 3 tentativas: a chamada já saiu e a resposta é ambígua ou esgotada. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Chamada que não saiu não cria linha. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`).
 
 Valores iniciais de exemplo, a calibrar com métrica real (p99 do parceiro, taxa de erro).
 
@@ -124,10 +124,10 @@ WireMock no lugar do parceiro, num teste de integração com o Spring de verdade
 | Latência de 3 s (`withFixedDelay(3_000)`) | A resposta volta em ~2 s (timeout de leitura), com `202 PENDENTE`; nunca `201`. Depois, as vagas do bulkhead voltam ao máximo: a thread foi liberada. |
 | 500 / conexão derrubada (`withFault(CONNECTION_RESET_BY_PEER)`) repetidos | Após `minimum-number-of-calls` com taxa acima do limite, o estado vai a `OPEN` (lido no `CircuitBreakerRegistry`). |
 | Circuito aberto | A próxima chamada responde `503` em poucos ms e o WireMock não recebe requisição nova (`verify(exactly(n), ...)`). |
-| Recuperação (no teste, `wait-duration-in-open-state` curto) | Stub volta a `200`, o estado passa a `HALF_OPEN` e, com as chamadas de teste ok, `CLOSED`. |
+| Recuperação (no teste, `wait-duration-in-open-state` curto) | Stub volta a `200`, o estado passa a `HALF_OPEN` (o teste da volta, com poucas chamadas) e, com as chamadas de teste ok, `CLOSED`. |
 | 503 seguido de 200 (cenários do WireMock) | Houve retry e cada tentativa levou a mesma chave: `verify(postRequestedFor(urlEqualTo("/charges")).withHeader("Idempotency-Key", equalTo(k)))`, e nenhuma com chave diferente. Timeout: exatamente 1 chamada ao parceiro. |
 | Duas requisições simultâneas com a mesma chave | Uma `201`, uma `409`; o parceiro recebe 1 chamada. |
 | Recusa (`402`) repetida | O circuito continua `CLOSED`: recusa não é falha técnica. |
 | Recusa e depois outro cartão com a mesma chave | `422`; o WireMock não recebe nova cobrança. |
 
-O WireMock devolve o que mandamos. Ele não prova que o parceiro real deduplica pela chave, nem como ele responde a um timeout. Há também um teste de contrato no sandbox do parceiro: mesma chave duas vezes → uma cobrança só; e a consulta usada pela reconciliação devolve o estado esperado.
+O arquivo de teste usa um disjuntor menor: janela de 4, aberto 2 s, lenta a 900 ms em 50%, 2 chamadas em half-open. O desenho usa 50 / 20 / 1.500 ms / 60% / 30 s / 5. O WireMock devolve o que mandamos. Ele não prova que o parceiro real deduplica pela chave, nem como ele responde a um timeout. Há também um teste de contrato no sandbox do parceiro: mesma chave duas vezes → uma cobrança só; e a consulta usada pela reconciliação devolve o estado esperado.

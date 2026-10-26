@@ -8,7 +8,7 @@ YAML, tabelas e o diagrama estão no [anexo](anexo-detalhes.md).
 - **Justificativa:** Considerando a capacidade de suportar 10 mil acessos concorrentes, por que você fez essa escolha técnica?
   > A escolha é Spring MVC com threads virtuais.
   > Thread virtual é uma espera barata. Ela não ocupa uma thread do sistema operacional.
-  > A carga desta API é espera de rede. O código segue a ordem normal, com JDBC e Resilience4j (a biblioteca do timeout e do disjuntor).
+  > A carga desta API é espera de rede. O código segue a ordem normal, com JDBC (acesso Java ao banco) e Resilience4j (a biblioteca do timeout e do disjuntor).
   > WebFlux fica de fora. Não há fluxo contínuo de dados nem banco reativo.
   > Dez mil esperas gastam memória. O limite real é o pool do banco. O HikariCP (esse pool) começa com 10 conexões. Nenhuma fica aberta durante a chamada ao parceiro.
   > No Java 21, `synchronized` em volta de uma espera prende a thread virtual. Use `ReentrantLock` (trava que não prende a virtual thread). Detalhe: [anexo, paradigma](anexo-detalhes.md#paradigma).
@@ -29,12 +29,11 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   > Disjuntor aberto, bulkhead cheio ou cota estourada: respondemos 503 com `Retry-After`, sem linha de pagamento.
   > Timeout ou 500 depois de enviar: 202 com `PENDENTE`. A reconciliação só fecha essa linha com `WHERE status = 'PENDENTE'`.
   > Ordem e YAML: [anexo, padrões](anexo-detalhes.md#padroes). O laboratório usa retentativa de 3 chamadas, connect de 1 s e read de 2 s.
-  > No arquivo de teste o disjuntor é menor: 4 chamadas, aberto 2 s, lenta a 900 ms em 50%, e 2 em half-open.
 
 - **Proteção contra Duplicidade:**
   Como a `Idempotency-Key` será utilizada na requisição do Checkout para evitar cobranças duplas? Qual o ciclo de vida dessa chave?
   > A chave é da intenção de compra. Idempotência: repetir o pedido não cobra duas vezes.
-  > O cliente gera um UUID e reenvia o mesmo. Sem o cabeçalho, a resposta é 400.
+  > O cliente gera um UUID (identificador único) e reenvia o mesmo. Sem o cabeçalho, a resposta é 400.
   > A chave de idempotência tem `UNIQUE (chave)` em `idempotency_keys`. O pagamento tem `UNIQUE (order_id)`. A mesma chave segue para o parceiro.
   > Mesma chave e mesmo corpo já concluído devolvem a resposta guardada: 201, 402 ou 202. Corpo diferente: 422. Ainda em processamento: 409.
   > Um 503 em que a chamada não saiu libera a chave e não cria pagamento. Três respostas 503 ou 429, ou um timeout ou 500, gravam `PENDENTE`. A chave vale 24 h.

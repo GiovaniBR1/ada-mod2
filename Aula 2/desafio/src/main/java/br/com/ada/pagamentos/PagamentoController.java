@@ -27,7 +27,7 @@ public class PagamentoController {
     @Operation(summary = "Cria um pagamento no parceiro, com idempotência e proteção contra falhas")
     @ApiResponse(responseCode = "201", description = "Parceiro respondeu; status final dele",
             content = @Content(schema = @Schema(implementation = PagamentoResponse.class)))
-    @ApiResponse(responseCode = "202", description = "Fallback: parceiro lento ou com erro ambíguo. Pagamento PENDENTE; a reconciliação fecha depois. Reenviar com a mesma chave devolve esta resposta.",
+    @ApiResponse(responseCode = "202", description = "A chamada já saiu e a resposta é ambígua ou esgotada (timeout, 500, ou 503/429 nas três tentativas). Pagamento PENDENTE; a reconciliação fecha depois. Reenviar com a mesma chave devolve esta resposta.",
             content = @Content(schema = @Schema(implementation = PagamentoResponse.class)))
     @ApiResponse(responseCode = "400", description = "Sem Idempotency-Key ou corpo inválido (Problem Details)",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
@@ -37,7 +37,7 @@ public class PagamentoController {
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     @ApiResponse(responseCode = "500", description = "O parceiro pode ter cobrado e a contingência falhou ao registrar PENDENTE",
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
-    @ApiResponse(responseCode = "503", description = "Parceiro indisponível e NADA foi cobrado (circuito aberto, conexão recusada, 429/503 do parceiro). Tente de novo com a mesma chave.",
+    @ApiResponse(responseCode = "503", description = "A chamada não saiu e nada foi cobrado (circuito aberto, bulkhead cheio, conexão recusada nas três tentativas). Tente de novo com a mesma chave.",
             headers = @Header(name = "Retry-After", description = "Segundos até tentar de novo"),
             content = @Content(mediaType = "application/problem+json", schema = @Schema(implementation = ProblemDetail.class)))
     @PostMapping("/pagamentos")
