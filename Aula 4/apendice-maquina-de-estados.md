@@ -13,6 +13,7 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 | Nome que apareceu antes | O que ele era | Nome neste apêndice |
 |---|---|---|
 | `PENDENTE` da Aula 2 | Status da **linha de pagamento**, não do pedido. Só existe quando a chamada ao parceiro já saiu e a resposta é ambígua (timeout ou 500). | Continua `pagamento.status = PENDENTE`. O pedido, nesse meio-tempo, fica em `PAGAMENTO_EM_VERIFICACAO`. |
+| Espera do Pix na Aula 4 | Pedido em `AGUARDANDO_PAGAMENTO` por até 15 min: QR criado, dinheiro ainda não capturado. `PENDENTE` não serve aqui. | `pagamento.status = AGUARDANDO_CAPTURA`, com `txid`. O webhook leva a `APROVADO`. No fim dos 15 min sem captura, `EXPIRADO`. |
 | `PENDENTE` da Aula 4 | Pedido recebido, reserva de estoque ainda sem resposta. | Continua `PENDENTE`. Se o prazo estoura e a consulta não fecha, vai para `ESTOQUE_EM_VERIFICACAO`. Não fica parado. |
 | `CANCELADO` da Aula 4 | Um rótulo para três situações. | Dividido: `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`, ou nem chega a cancelar (`ESTORNANDO` / `ESTORNO_EM_REVISAO` / `ESTORNO_FALHOU`). |
 | `AGUARDANDO_PIX`, `CONFIRMADO`, `RESERVANDO_ESTOQUE` (textos das Aulas 5 e 6) | Sinônimos da mesma situação, com outro nome. | `AGUARDANDO_PAGAMENTO`, `CONCLUIDO`, `PENDENTE`. |

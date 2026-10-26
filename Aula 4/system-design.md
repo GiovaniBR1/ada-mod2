@@ -82,7 +82,7 @@
   > **Caminho feliz.**
   > 1. Checkout grava o pedido `PENDENTE` e o comando `ReservarEstoque` na outbox (uma transação).
   > 2. Estoque reserva (`UPDATE` atômico da Aula 3, reserva `ATIVA` com prazo) e grava `EstoqueReservado` na sua outbox.
-  > 3. Orquestrador muda para `AGUARDANDO_PAGAMENTO` e emite `CobrarPagamento`. O Pagamento gera o QR Code do Pix.
+  > 3. Orquestrador muda para `AGUARDANDO_PAGAMENTO` e emite `CobrarPagamento`. O Pagamento gera o QR Code do Pix e grava a linha `AGUARDANDO_CAPTURA`, com o `txid` do QR.
   > 4. O PSP avisa que o Pix caiu; o Pagamento grava `APROVADO` e `PagamentoAprovado`.
   > 5. Orquestrador muda para `PAGO` e emite `ConfirmarReserva`. Estoque muda a reserva para `CONFIRMADA` e responde `ReservaConfirmada`.
   > 6. Pedido `CONCLUIDO`.
@@ -123,7 +123,7 @@
 > | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 > | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 > | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
-> | Pagamento | `pagamento` | (Aula 3) + `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (e2e_id)`: o identificador do Pix no Banco Central, contra confirmação duplicada do PSP. |
+> | Pagamento | `pagamento` | `id`, `order_id`, `valor numeric(12,2)`, `status text`, `version bigint`, `txid text`, `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (txid)`: id do QR, o webhook acha a linha por ele; `UNIQUE (e2e_id)`: id do Pix no Banco Central, contra confirmação duplicada. `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`. A linha nasce `AGUARDANDO_CAPTURA` ao criar o QR (pedido em `AGUARDANDO_PAGAMENTO`, até 15 min). O webhook leva a `APROVADO`; no fim dos 15 min sem captura, `EXPIRADO`. `PENDENTE` só para timeout ou 500. |
 > | Pagamento | `estorno` | `id`, `pagamento_id`, `valor`, `status`, `tentativas int`, `proxima_tentativa_em` | **`UNIQUE (pagamento_id)`**: um estorno por pagamento; `CHECK (status IN ('SOLICITADO','CONCLUIDO','FALHOU'))`; `CHECK (tentativas <= 5)`. |
 
 ---
