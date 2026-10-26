@@ -66,8 +66,37 @@ ALTER TABLE pedido ADD COLUMN estado_saga VARCHAR(40) NULL;
 
 A 5.000 TPS sempre há transações abertas. Um `ALTER` esperando trava quem chega depois. Se o Job não conseguir a trava em 3 s, desiste e tenta de novo, sem parar o checkout.
 
+<a id="mapa-de-pares"></a>
+## Mapa de pares
+
+Este SQL é o esquema do laboratório (H2 em modo PostgreSQL, tabela `pedido` no singular). A tradução para o esquema da Aula 4:
+
+| Neste SQL (laboratório) | Na Aula 4 |
+| :--- | :--- |
+| `pedido` | `pedidos` |
+| `pedido.status_pagamento` | coluna antiga da v1.5; o estado vivo é `pedidos.status` |
+| `pedido.estado_saga` | `pedidos.status` |
+| `pagamento.pedido_id` | `pagamento.order_id` |
+| `pagamento.capturado` | `pagamento.status = 'APROVADO'` |
+| `pagamento.estorno_confirmado` | estorno concluído; o pedido fica `CANCELADO_COM_ESTORNO` |
+
+Zero linha fora do mapa: um token que não está na tabela abaixo faz o script lançar exceção. Os doze estados do apêndice entram no mapa como o mesmo token, então uma linha que já os carrega não dispara essa exceção.
+
+| Coluna antiga | `estado_saga` |
+| :--- | :--- |
+| `AGUARDANDO_PIX` | `AGUARDANDO_PAGAMENTO` |
+| `CONFIRMADO` | `CONCLUIDO` |
+| `RESERVANDO_ESTOQUE` | `PENDENTE` |
+| `CANCELADO` sem captura | `CANCELADO_SEM_COBRANCA` |
+| `CANCELADO` com estorno confirmado | `CANCELADO_COM_ESTORNO` |
+| `CANCELADO` com captura e sem confirmação de estorno | `ESTORNO_EM_REVISAO` |
+| `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`, `ESTORNANDO`, `ESTORNO_EM_REVISAO` | o mesmo token |
+| `ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO` | o mesmo token (já é um dos doze) |
+
 ```sql
 -- V11__backfill_estado_saga.sql
+-- Esquema do laboratório (pedido, status_pagamento, pagamento.pedido_id).
+-- Tradução para a Aula 4: tabela acima (pedidos, pedidos.status, pagamento.order_id).
 -- executeInTransaction=false no .conf, senão o COMMIT interno é recusado.
 CREATE OR REPLACE PROCEDURE pedido_backfill_estado_saga(batch_size int DEFAULT 5000)
 LANGUAGE plpgsql AS $$
@@ -77,22 +106,30 @@ BEGIN
     SELECT 1 FROM pedido
      WHERE estado_saga IS NULL
        AND status_pagamento NOT IN (
-         'PENDENTE','AGUARDANDO_PAGAMENTO','AGUARDANDO_PIX','PAGO','CONCLUIDO',
-         'CONFIRMADO','RESERVANDO_ESTOQUE','ESTORNANDO','ESTORNO_EM_REVISAO','CANCELADO')
+         'PENDENTE','ESTOQUE_EM_VERIFICACAO','AGUARDANDO_PAGAMENTO','AGUARDANDO_PIX',
+         'PAGAMENTO_EM_VERIFICACAO','PAGO','CONFIRMACAO_EM_VERIFICACAO','CONCLUIDO',
+         'CONFIRMADO','RESERVANDO_ESTOQUE','CANCELADO_SEM_COBRANCA','ESTORNANDO',
+         'ESTORNO_EM_REVISAO','ESTORNO_FALHOU','CANCELADO_COM_ESTORNO','CANCELADO')
   ) THEN
     RAISE EXCEPTION 'status_pagamento sem mapa para estado_saga';
   END IF;
   LOOP
     UPDATE pedido p SET estado_saga = CASE p.status_pagamento
       WHEN 'PENDENTE' THEN 'PENDENTE'
+      WHEN 'ESTOQUE_EM_VERIFICACAO' THEN 'ESTOQUE_EM_VERIFICACAO'
       WHEN 'AGUARDANDO_PAGAMENTO' THEN 'AGUARDANDO_PAGAMENTO'
       WHEN 'AGUARDANDO_PIX' THEN 'AGUARDANDO_PAGAMENTO'
+      WHEN 'PAGAMENTO_EM_VERIFICACAO' THEN 'PAGAMENTO_EM_VERIFICACAO'
       WHEN 'PAGO' THEN 'PAGO'
+      WHEN 'CONFIRMACAO_EM_VERIFICACAO' THEN 'CONFIRMACAO_EM_VERIFICACAO'
       WHEN 'CONCLUIDO' THEN 'CONCLUIDO'
       WHEN 'CONFIRMADO' THEN 'CONCLUIDO'
       WHEN 'RESERVANDO_ESTOQUE' THEN 'PENDENTE'
+      WHEN 'CANCELADO_SEM_COBRANCA' THEN 'CANCELADO_SEM_COBRANCA'
       WHEN 'ESTORNANDO' THEN 'ESTORNANDO'
       WHEN 'ESTORNO_EM_REVISAO' THEN 'ESTORNO_EM_REVISAO'
+      WHEN 'ESTORNO_FALHOU' THEN 'ESTORNO_FALHOU'
+      WHEN 'CANCELADO_COM_ESTORNO' THEN 'CANCELADO_COM_ESTORNO'
       WHEN 'CANCELADO' THEN CASE
         WHEN NOT EXISTS (SELECT 1 FROM pagamento g WHERE g.pedido_id = p.id AND g.capturado)
           THEN 'CANCELADO_SEM_COBRANCA'
