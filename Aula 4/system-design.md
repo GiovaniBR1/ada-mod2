@@ -111,7 +111,7 @@
   >
   > **O efeito colateral: entrega "pelo menos uma vez".** Se o Debezium cai depois de publicar e antes de anotar até onde leu, ele publica de novo. Por isso **todo consumidor é idempotente**: grava o `message_id` em `mensagens_processadas` (PK) na mesma transação do efeito. Mensagem repetida bate na PK e é descartada. O job de prazos entra nessa regra: ele reapresenta o mesmo `message_id`. Um id novo seria outra mensagem, e a PK não a seguraria.
   >
-  > **Volume.** Cada compra gera cerca de 8 mensagens (4 comandos e 4 respostas). A 5.000 TPS são **≈ 40 mil mensagens/s** e 40 mil linhas novas por segundo nas outboxes. Para a tabela não crescer sem fim, ela é particionada por dia e as partições antigas são apagadas inteiras (`DROP` da partição é instantâneo; `DELETE` de milhões de linhas não é).
+  > **Volume.** O caminho feliz acima nomeia 6 mensagens entre os serviços (3 comandos e 3 respostas: `ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada`). A sétima é `PedidoConcluido`, o evento da projeção. A 5.000 TPS, essas 7 são **≈ 35 mil mensagens/s** e 35 mil linhas novas por segundo nas outboxes. Para a tabela não crescer sem fim, ela é particionada por dia e as partições antigas são apagadas inteiras (`DROP` da partição é instantâneo; `DELETE` de milhões de linhas não é).
 
 ### 2.3 Modelo de Dados (o que a Saga acrescenta)
 
@@ -119,7 +119,7 @@
 >
 > | Serviço | Tabela | Campos principais | Constraints e regras |
 > |---|---|---|---|
-> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK` com os doze estados do [apêndice](apendice-maquina-de-estados.md) (`PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`); `estorno_pendente` fica verdadeiro enquanto o estado é `ESTORNANDO`; índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
+> | Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK` com os doze estados do [apêndice](apendice-maquina-de-estados.md) (`PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`); `estorno_pendente` é verdadeiro em `ESTORNANDO`, `ESTORNO_EM_REVISAO` e `ESTORNO_FALHOU`, e falso só em `CANCELADO_COM_ESTORNO`; índice parcial em `prazo_passo` só para estados não finais (o job de prazos). |
 > | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 > | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 > | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
