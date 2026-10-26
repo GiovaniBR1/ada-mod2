@@ -6,7 +6,7 @@
 >
 > **A carga.** 5.000 checkouts por segundo no pico e milhões de clientes atualizando "Meus Pedidos" a cada poucos segundos.
 >
-> **O que não muda das aulas anteriores:** a `Idempotency-Key` contra o clique duplo, o disjuntor e o timeout no parceiro, o `PENDENTE` da **linha de pagamento** quando a resposta do parceiro é ambígua (Aula 2; não é o estado do pedido), e o `UPDATE` atômico do estoque com Bulkhead por produto antes do banco (Aula 3). Os nomes do pedido estão no [apêndice](apendice-maquina-de-estados.md), compartilhado com as Aulas 5 e 6.
+> **O que não muda das aulas anteriores:** a `Idempotency-Key` contra o clique duplo, o disjuntor e o timeout no parceiro, o `PENDENTE` da **linha de pagamento** só no timeout ou 500 da chamada síncrona (Aula 2; não é o estado do pedido), e o `UPDATE` atômico do estoque com Bulkhead por produto antes do banco (Aula 3). A regra da linha, o `CHECK` e a única exceção a "estado final não muda" (`EXPIRADO` → `APROVADO` quando o webhook de captura chega tarde, e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`) estão na [regra única](apendice-maquina-de-estados.md#linha-de-pagamento). Os nomes do pedido estão no [apêndice](apendice-maquina-de-estados.md), compartilhado com as Aulas 5 e 6.
 
 **Glossário curto.** *Saga*: uma compra dividida em passos locais, cada um com um "desfazer" (a **compensação**). *Outbox*: tabela onde o serviço grava o evento junto com o dado, na mesma transação. *Broker*: o carteiro das mensagens entre serviços (aqui, Kafka). *CQRS*: separar o modelo que grava do modelo que responde consultas. *Idempotente*: fazer duas vezes dá o mesmo resultado que fazer uma.
 
@@ -77,7 +77,7 @@
   >   CANCELADO_COM_ESTORNO --> [*]
   > ```
   >
-  > Cada transição é `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Se 0 linhas mudaram, a mensagem é velha ou repetida e é ignorada, com uma exceção: Pix aprovado em `CANCELADO_SEM_COBRANCA` não é descarte (o dinheiro entrou). `CANCELADO_COM_ESTORNO` só existe **depois** de o dinheiro voltar. `CANCELADO_SEM_COBRANCA` só existe quando nada foi capturado. Não há estado "cancelado com Pix retido". `PAGO` tem `prazo_passo` (ex.: 30 s): sem resposta da reserva, o pedido não fica cobrado para sempre.
+  > Cada transição é `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Se 0 linhas mudaram, a mensagem é velha ou repetida e é ignorada, com uma exceção: Pix aprovado em `CANCELADO_SEM_COBRANCA` não é descarte (o dinheiro entrou) e `pagamento.status` sai de `EXPIRADO` para `APROVADO`, a única exceção a "estado final não muda" ([regra única](apendice-maquina-de-estados.md#linha-de-pagamento)). `CANCELADO_COM_ESTORNO` só existe **depois** de o dinheiro voltar. `CANCELADO_SEM_COBRANCA` só existe quando nada foi capturado. Não há estado "cancelado com Pix retido". `PAGO` tem `prazo_passo` (ex.: 30 s): sem resposta da reserva, o pedido não fica cobrado para sempre.
 - **Detalhamento dos Fluxos:**
   > **Caminho feliz.**
   > 1. Checkout grava o pedido `PENDENTE` e o comando `ReservarEstoque` na outbox (uma transação).
@@ -123,7 +123,7 @@
 > | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 > | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 > | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |
-> | Pagamento | `pagamento` | `id`, `order_id`, `valor numeric(12,2)`, `status text`, `version bigint`, `txid text`, `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (txid)`: id do QR, o webhook acha a linha por ele; `UNIQUE (e2e_id)`: id do Pix no Banco Central, contra confirmação duplicada. `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`. A linha nasce `AGUARDANDO_CAPTURA` ao criar o QR (pedido em `AGUARDANDO_PAGAMENTO`, até 15 min). O webhook leva a `APROVADO`; no fim dos 15 min sem captura, `EXPIRADO`. `PENDENTE` só para timeout ou 500. |
+> | Pagamento | `pagamento` | `id`, `order_id`, `valor numeric(12,2)`, `status text`, `version bigint`, `txid text`, `e2e_id text` | `UNIQUE (order_id)`; `UNIQUE (txid)`: id do QR, o webhook acha a linha por ele; `UNIQUE (e2e_id)`: id do Pix no Banco Central, contra confirmação duplicada. `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 2 e 3. O que cada valor significa está na [regra única](apendice-maquina-de-estados.md#linha-de-pagamento). |
 > | Pagamento | `estorno` | `id`, `pagamento_id`, `valor`, `status`, `tentativas int`, `proxima_tentativa_em` | **`UNIQUE (pagamento_id)`**: um estorno por pagamento; `CHECK (status IN ('SOLICITADO','CONCLUIDO','FALHOU'))`; `CHECK (tentativas <= 5)`. |
 
 ---

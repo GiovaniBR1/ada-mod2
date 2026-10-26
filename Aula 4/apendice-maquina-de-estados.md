@@ -12,8 +12,8 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 
 | Nome que apareceu antes | O que ele era | Nome neste apêndice |
 |---|---|---|
-| `PENDENTE` da Aula 2 | Status da **linha de pagamento**, não do pedido. Só existe quando a chamada ao parceiro já saiu e a resposta é ambígua (timeout ou 500). | Continua `pagamento.status = PENDENTE`. O pedido, nesse meio-tempo, fica em `PAGAMENTO_EM_VERIFICACAO`. |
-| Espera do Pix na Aula 4 | Pedido em `AGUARDANDO_PAGAMENTO` por até 15 min: QR criado, dinheiro ainda não capturado. `PENDENTE` não serve aqui. | `pagamento.status = AGUARDANDO_CAPTURA`, com `txid`. O webhook leva a `APROVADO`. No fim dos 15 min sem captura, `EXPIRADO`. |
+| `PENDENTE` da Aula 2 | Nome antigo da espera. Não é o estado do pedido. | Ver a [regra única](#linha-de-pagamento). `PENDENTE` só no timeout ou 500 da chamada síncrona. |
+| Espera do Pix na Aula 4 | QR criado, dinheiro ainda não capturado. | Ver a [regra única](#linha-de-pagamento). A linha nasce `AGUARDANDO_CAPTURA`. |
 | `PENDENTE` da Aula 4 | Pedido recebido, reserva de estoque ainda sem resposta. | Continua `PENDENTE`. Se o prazo estoura e a consulta não fecha, vai para `ESTOQUE_EM_VERIFICACAO`. Não fica parado. |
 | `CANCELADO` da Aula 4 | Um rótulo para três situações. | Dividido: `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`, ou nem chega a cancelar (`ESTORNANDO` / `ESTORNO_EM_REVISAO` / `ESTORNO_FALHOU`). |
 | `AGUARDANDO_PIX`, `CONFIRMADO`, `RESERVANDO_ESTOQUE` (textos das Aulas 5 e 6) | Sinônimos da mesma situação, com outro nome. | `AGUARDANDO_PAGAMENTO`, `CONCLUIDO`, `PENDENTE`. |
@@ -21,6 +21,17 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 | Prazo de 24 h (Aula 6) | Não havia prazo na revisão: o chamado humano podia ficar sem fim. | **Acrescenta o fim da revisão.** 24 h em `ESTORNO_EM_REVISAO` sem confirmação do PSP abrem `ESTORNO_FALHOU`. O chamado segue aberto. O job consulta o PSP uma vez por dia e, se a devolução existir, fecha em `CANCELADO_COM_ESTORNO` sem pedir o estorno de novo. |
 
 `Aula 4/desafio/SagaCompra.java` imprime `CANCELADO_SEM_COBRANCA` quando nada foi cobrado e `CANCELADO_COM_ESTORNO` quando o Pix foi devolvido. A Aula 6 grava `PENDENTE`, `AGUARDANDO_PAGAMENTO` e `CONCLUIDO`. O laboratório da Aula 5, no backfill do H2, ainda copia o token antigo `CONFIRMADO` para `estado_saga` (o teste espera esse valor); no mapa de produção, `CONFIRMADO` vira `CONCLUIDO`.
+
+<a id="linha-de-pagamento"></a>
+## Regra única da linha de pagamento
+
+Vale para as Aulas 2, 3 e 4. O `CHECK` é o mesmo nas três:
+
+`CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`
+
+- Chamada síncrona (cartão, Aulas 2 e 3, antes do Pix com QR): resultado claro grava `APROVADO` ou `RECUSADO` depois da resposta. `PENDENTE` existe só quando a chamada já saiu e a resposta é ambígua (timeout ou 500). 503 em que o parceiro não foi chamado não cria linha. O diagrama dessas aulas é esse caminho e aponta para cá. O pedido, enquanto a linha está `PENDENTE`, fica em `PAGAMENTO_EM_VERIFICACAO`.
+- Pix com QR (Aula 4): a linha nasce `AGUARDANDO_CAPTURA`, com `txid`, quando o QR é criado. O pedido fica `AGUARDANDO_PAGAMENTO` por até 15 min. O webhook de captura leva a `APROVADO`. Quinze minutos sem captura: a linha vai para `EXPIRADO` e o pedido para `CANCELADO_SEM_COBRANCA`.
+- Estado final da linha (`APROVADO`, `RECUSADO`, `EXPIRADO`) não muda. A única exceção: o webhook de captura que chega com a linha já em `EXPIRADO` muda `pagamento.status` de `EXPIRADO` para `APROVADO`. O pedido que está em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
 
 ## Estados
 
@@ -69,7 +80,7 @@ stateDiagram-v2
   CANCELADO_COM_ESTORNO --> [*]
 ```
 
-Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Zero linhas significam mensagem velha ou repetida, com uma exceção: `PagamentoAprovado` com o pedido já em `CANCELADO_SEM_COBRANCA` não é descarte. O dinheiro entrou. O pedido vai para `ESTORNANDO`.
+Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Zero linhas significam mensagem velha ou repetida, com uma exceção: `PagamentoAprovado` com o pedido já em `CANCELADO_SEM_COBRANCA` não é descarte. O dinheiro entrou. O pedido vai para `ESTORNANDO`. Na linha de pagamento, esse mesmo webhook é a única saída de estado final: `EXPIRADO` vai para `APROVADO` ([regra única](#linha-de-pagamento)).
 
 ## Política de prazo, tentativa e estorno
 

@@ -78,7 +78,7 @@
   > | `produto` | `sku text`, `nome text`, `preco numeric(12,2)`, `atributos jsonb` | PK `sku`; `CHECK (preco > 0)`. É daqui que sai o preço **cobrado** (1.1). |
   > | `estoque` | `sku text`, `disponivel int` | PK e FK `sku` → `produto`; `CHECK (disponivel >= 0)`. **Sem `@Version`**: a trava é o `UPDATE` atômico (2.2). |
   > | `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK` na lista de `order_status` (ex.: `processing`, `delivered`); `@Version` (baixa disputa, como 2.1). Índices na seção 3.2. O `order_status` do exemplo é a consulta do incidente no enunciado; o estado vivo do checkout, na saga, é o do [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md). |
-  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e **`UNIQUE (order_id)`: um pagamento por pedido**; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`; `@Version` (2.1). |
+  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e **`UNIQUE (order_id)`: um pagamento por pedido**; `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 2 e 4; `@Version` (2.1). O diagrama abaixo é o caminho síncrono, antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce com o QR na Aula 4 ([regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento)). |
   > | `reserva` | `id uuid`, `order_id uuid`, `sku text`, `qtd int`, `status text`, `expira_em timestamptz` | FKs para `pedidos` e `estoque`; `UNIQUE (order_id, sku)`; `CHECK (qtd > 0)`; `CHECK (status IN ('ATIVA','CONFIRMADA','LIBERADA'))`; `expira_em NOT NULL`. |
   > | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | PK `id`; **`UNIQUE (chave)`** (1.2); `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
   >
@@ -98,7 +98,7 @@
 - **Justificativa:** Por que essa abordagem é a mais adequada para este cenário específico?
   > Um pagamento quase nunca é disputado: no caso comum, só a própria requisição o fecha. Prender a linha com `FOR UPDATE` em toda mudança seria pagar fila por um conflito raro. Com `@Version`, o Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Se outra transação mudou a linha antes, 0 linhas são afetadas e o Hibernate lança `OptimisticLockException` (no Spring, `ObjectOptimisticLockingFailureException`).
   >
-  > **O conflito raro existe, e é o da Aula 02:** resposta tardia do parceiro e job de reconciliação fechando o mesmo `PENDENTE`. Quem perder a corrida **não tenta de novo às cegas**: relê o pagamento; se já saiu de `PENDENTE`, não faz nada (evento atrasado só muda o que o estado atual ainda permite: ESTADO). A transição também é guardada pela regra no próprio `UPDATE` (`... AND status = 'PENDENTE'`), então mesmo um caminho sem JPA não reabre um pagamento fechado.
+  > **O conflito raro existe, e é o da Aula 02:** resposta tardia do parceiro e job de reconciliação fechando o mesmo `PENDENTE`. Quem perder a corrida **não tenta de novo às cegas**: relê o pagamento; se já saiu de `PENDENTE`, não faz nada (evento atrasado só muda o que o estado atual ainda permite: ESTADO). A transição também é guardada pela regra no próprio `UPDATE` (`... AND status = 'PENDENTE'`), então mesmo um caminho sem JPA não reabre um pagamento fechado. A única exceção é a [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento): webhook de captura com a linha em `EXPIRADO` grava `APROVADO`.
   >
   > ```java
   > @Entity
@@ -232,7 +232,7 @@
 > **Material extra:** esta seção não é pedida pelo template da Aula 03; foi mantida como estudo e para reforçar a robustez do desenho. As perguntas detalhadas estão em `perguntas-de-risco.md`.
 
 1. **E se...** a resposta atrasada do parceiro e a reconciliação fecharem o mesmo `PENDENTE` ao mesmo tempo, com resultados diferentes?
-   - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada. Se o vencedor foi `EXPIRADO` e o dinheiro tinha entrado, a linha do pagamento não reabre; a saga (apêndice da Aula 4) pede o estorno.
+   - **Resposta do Sistema:** os dois carregam o pagamento com `version = 3`. O primeiro commit grava `version = 4`; o `UPDATE ... WHERE version = 3` do segundo afeta 0 linhas e o Hibernate lança `OptimisticLockException`. O perdedor relê: o status já não é `PENDENTE`, então não faz nada e só registra o evento. O cliente nunca vê o pagamento "mudar de ideia". Se a reconciliação perdeu para um `APROVADO`, o estoque **não** é devolvido, porque a devolução está na mesma transação que foi abortada. Se o vencedor foi `EXPIRADO` e o webhook de captura chega depois, `pagamento.status` vai de `EXPIRADO` para `APROVADO` (única exceção da [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento)) e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
 2. **E se...** o pagamento for recusado ou expirar depois que a última unidade já foi reservada?
    - **Resposta do Sistema:** a T2 grava a linha de pagamento como `RECUSADO` ou `EXPIRADO` (ela nasce nessa resposta, não na T1) e, **na mesma transação**, faz `UPDATE reserva SET status = 'LIBERADA' WHERE id = ? AND status = 'ATIVA'` e devolve a unidade só se essa linha mudou. Se a aplicação cair antes da T2, ainda não há linha de pagamento: a reserva segue `ATIVA`, o estoque continua baixado, e a reconciliação consulta o parceiro pela mesma chave antes de gravar o pagamento e liberar. Liberar duas vezes é impossível: a segunda tentativa encontra `LIBERADA` e afeta 0 linhas.
 3. **E se...** a migration do índice novo travar as gravações durante o pico?
@@ -259,8 +259,10 @@ sequenceDiagram
     end
     API-->>C: 201 / 402, ou 202 se o pagamento ficou PENDENTE
   end
-  Note over DB: 503 sem chamada não cria pagamento. Reconciliação só fecha um PENDENTE já gravado e libera a reserva com a mesma regra
+  Note over DB: 503 sem chamada não cria pagamento. Reconciliação só fecha um PENDENTE já gravado. Caminho síncrono, antes do Pix com QR
 ```
+
+Este diagrama é o caminho síncrono, antes do Pix com QR. `AGUARDANDO_CAPTURA` e a exceção `EXPIRADO` → `APROVADO` estão na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 
 ---
 

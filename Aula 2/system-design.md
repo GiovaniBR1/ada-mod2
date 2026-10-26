@@ -33,7 +33,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   >
   > **Fallback (FALHA: na dúvida, nega; falha nunca vira "aprovado"):**
   > - Circuito aberto, bulkhead cheio ou rate limit estourado: **sabemos que não chamamos o parceiro**. Responde `503` com `Retry-After`; o cliente pode tentar de novo com a mesma chave.
-  > - Timeout ou 500 depois de enviar: **não sabemos se cobrou**. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`): evento atrasado não muda estado final (ESTADO).
+  > - Timeout ou 500 depois de enviar: **não sabemos se cobrou**. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`): evento atrasado não muda estado final (ESTADO). A única exceção é a [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento): o webhook de captura depois de `EXPIRADO` muda `pagamento.status` de `EXPIRADO` para `APROVADO`, e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
   >
   > ```yaml
   > # Valores iniciais de exemplo, a calibrar com métrica real (p99 do parceiro, taxa de erro).
@@ -84,7 +84,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   > | Tabela | Campos | Constraints |
   > |---|---|---|
   > | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | **`UNIQUE (chave)`**: é ela que decide quem chegou primeiro; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
-  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint` | **`UNIQUE (order_id)`**: um pagamento por pedido, a segunda trava; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`. |
+  > | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint` | **`UNIQUE (order_id)`**: um pagamento por pedido, a segunda trava; `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 3 e 4. |
   >
   > **Escolha de negócio: cartão recusado encerra a compra.** A chave é da intenção e o pagamento é único por pedido, então um `402` é resposta final daquela chave: repetir devolve o mesmo `402`; trocar o cartão com a mesma chave muda o corpo e dá `422`. Para tentar outro cartão, o cliente começa um **checkout novo**, com chave nova (nova intenção) e pedido novo. Aceitamos isso pela simplicidade: um pedido, uma cobrança. Várias tentativas no mesmo pedido ficam para quando o negócio pedir (DOR).
   >
@@ -113,6 +113,8 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   >     end
   >   end
   > ```
+  >
+  > Este diagrama é o caminho síncrono (cartão), antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce quando o QR é criado, na Aula 4. A exceção `EXPIRADO` → `APROVADO` está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 
 ## 3. Os Edge Cases (Engenharia do Caos)
 

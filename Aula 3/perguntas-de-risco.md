@@ -14,7 +14,7 @@ Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
 
 **Por quê.** "Lê, decide no Java, grava" deixa o último a escrever por cima do primeiro. Se o job gravar `EXPIRADO` depois de um `APROVADO`, devolve a unidade de um cliente que foi cobrado. O `@Version` vira `UPDATE ... WHERE id = ? AND version = ?`. Zero linhas lançam `OptimisticLockException` e desfazem a liberação de estoque que estava na mesma transação. A cláusula `AND status = 'PENDENTE'` segura também um caminho sem JPA.
 
-**Exemplo.** Pagamento `PG-10`, `PENDENTE`, `version = 3`, reserva `ATIVA`, estoque 4. Job e réplica leem a versão 3. A réplica commita `APROVADO` e `version = 4`, reserva `CONFIRMADA`. O `UPDATE` do job com `version = 3` afeta 0 linhas. O estoque continua 4. Se o job tivesse vencido, o pagamento ficaria `EXPIRADO` e a linha não reabriria: dinheiro que entrou depois segue o estorno da saga (apêndice da Aula 4), não um segundo status.
+**Exemplo.** Pagamento `PG-10`, `PENDENTE`, `version = 3`, reserva `ATIVA`, estoque 4. Job e réplica leem a versão 3. A réplica commita `APROVADO` e `version = 4`, reserva `CONFIRMADA`. O `UPDATE` do job com `version = 3` afeta 0 linhas. O estoque continua 4. Se o job tivesse vencido, o pagamento ficaria `EXPIRADO`. O webhook de captura que chega depois muda essa linha de `EXPIRADO` para `APROVADO` (única exceção da regra única no apêndice da Aula 4) e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
 
 **Como testamos.** Testcontainers com PostgreSQL 17.
 
