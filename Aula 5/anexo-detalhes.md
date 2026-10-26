@@ -17,7 +17,7 @@ O `emptyDir` não é volume de dados do pedido. O processo continua sem ser admi
 
 Paketo Buildpacks (`mvn spring-boot:build-image`) gera uma imagem parecida sem Dockerfile. O Dockerfile ganhou porque a aula pede para mostrar cada estágio. Com `BP_JVM_JLINK_ENABLED=true` a JRE fica só com os módulos que o serviço usa. Tamanho medido de uma imagem antiga não é repetido aqui: não há artefato deste scan no repositório para conferir o número.
 
-O digest da base está fixado no `desafio/Dockerfile`. A esteira roda `cosign verify` nessa base antes do build.
+O digest da base está fixado no `desafio/Dockerfile`. A esteira roda `cosign verify` nessa base antes do build. Ela audita as duas camadas: dependências Java (SCA) e pacotes do sistema. O uid 65532 é o `nonroot` da imagem, e o `chown` das camadas copiadas usa o mesmo número.
 
 <a id="promocao"></a>
 ## Promoção
@@ -28,7 +28,7 @@ docker push registry/checkout:1.5.0-a1b2c3d
 # o registry devolve o digest; os ambientes usam registry/checkout@sha256:...
 ```
 
-`1.5.0` é a versão do `pom.xml` desta aula. `a1b2c3d` é o commit, exemplo de formato. O digest do exemplo (`sha256:9b2e7c...f41a`) ilustra a forma; o valor real é o que o registry devolve.
+`1.5.0` é a versão do `pom.xml` desta aula. `a1b2c3d` é o commit, exemplo de formato. O digest do exemplo (`sha256:9b2e7c...f41a`) ilustra a forma; o valor real é o que o registry devolve. O registry guarda pelo menos as últimas 10 versões que estiveram em produção. Senha e URL vêm de ConfigMap e Secret, descritos em Helm e Terraform. As etiquetas `org.opencontainers.image.revision` e `org.opencontainers.image.version` aparecem no `/actuator/info` e em cada linha de log.
 
 ## Canary
 
@@ -161,7 +161,7 @@ Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma man
 
 (c) Conclusão na v2, partindo do pedido que acabou de ser pago. A coluna antiga fica `CONFIRMADO` e `estado_saga` fica `CONCLUIDO`.
 
-Um script que já rodou nunca é editado. O Flyway guarda o checksum, e `flyway validate` falha se o arquivo mudar. Correção vira script novo.
+Um script que já rodou nunca é editado. O Flyway guarda o checksum, e `flyway validate` falha se o arquivo mudar. Correção vira script novo. O contract (`V5` no laboratório, `V12` na sequência de produção) fica fora da pasta que o Flyway carrega no pico.
 
 ## Rollback
 
