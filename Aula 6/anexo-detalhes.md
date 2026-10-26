@@ -27,16 +27,17 @@ Volume, decisão: Em produção: 100% em `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ES
 
 | Estado | Dinheiro e estoque |
 | :--- | :--- |
+| `PENDENTE` | Caminho feliz, reserva feita e cobrança ainda não decidida. Na métrica entra como `ok`, fora da taxa de erro. Log em 5%. |
 | `CONCLUIDO` | Reserva confirmada e pagamento capturado, os dois ao mesmo tempo. |
 | `CANCELADO_SEM_COBRANCA` | Nada capturado: sem saldo, PSP recusou, ou teto de pendente estourou. |
 | `CANCELADO_COM_ESTORNO` | Havia captura e o PSP confirmou o estorno. |
 | `AGUARDANDO_PAGAMENTO` | Pix gerado e ainda não pago. O valor entra no teto de pendente. |
 | `PAGO` | Capturado, confirmação da reserva ainda no prazo. Na métrica entra como `ok`, fora da taxa de erro. |
-| `ESTORNANDO` | Estorno pedido, ainda dentro das cinco tentativas. Na métrica entra como `estornado`, fora da taxa de erro. A taxa da série fica com `estorno_falhou` e `verificacao`. |
+| `ESTORNANDO` | Estorno pedido, ainda dentro das cinco tentativas. Na métrica entra como `estornado`, fora da taxa de erro. |
 | `ESTOQUE_EM_VERIFICACAO` | Estoque mudo e a consulta não fechou. Não cobramos. |
 | `PAGAMENTO_EM_VERIFICACAO` | PSP mudo e a consulta não fechou. Não estornamos e não liberamos a reserva. |
 | `CONFIRMACAO_EM_VERIFICACAO` | Pagamento capturado e a confirmação do estoque não respondeu. Não estornamos enquanto o estoque for desconhecido. |
-| `ESTORNO_EM_REVISAO` | As cinco tentativas acabaram sem confirmação do PSP. O chamado abre aqui. |
+| `ESTORNO_EM_REVISAO` | As cinco tentativas acabaram sem confirmação do PSP. Dinheiro capturado sem devolução confirmada, até 24 h. Na métrica entra como `verificacao` e conta na taxa de erro, junto com `estorno_falhou`. O chamado abre aqui. |
 | `ESTORNO_FALHOU` | 24 h em revisão sem confirmação. O job consulta no dia seguinte e ainda pode fechar em `CANCELADO_COM_ESTORNO`, sem segunda devolução. |
 
 O teste `apos24hSemEstornoAbreAlertaENoDiaSeguinteAConsultaAindaFecha` deixa o pedido 25 h em revisão, vê o alerta, e na consulta do dia seguinte, com o PSP respondendo "estornado", o pedido vai para `CANCELADO_COM_ESTORNO` sem uma segunda chamada de estorno. As 24 h não substituem as cinco tentativas: as tentativas abrem a revisão; o prazo impede que a revisão não tenha fim.
@@ -80,7 +81,7 @@ Baldes do histograma, em segundos: 0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf. O pa
 | Sinal | O que conta | Nome |
 | :--- | :--- | :--- |
 | Rate | Chamadas por segundo | `rate(checkout_operacao_duracao_seconds_count[1m])` |
-| Errors | Erro da série é `resultado` em `verificacao` ou `estorno_falhou`; timeout, desistência do aplicativo e HTTP 5xx são contados no contador HTTP `http_server_requests_seconds`, e a taxa de erro do painel soma as duas fontes. | série `checkout_operacao_duracao_seconds` somada a `http_server_requests_seconds`. `sem_cobranca` é cancelamento sem captura (inclusive estoque esgotado), resultado de negócio, e fica fora da taxa de erro. |
+| Errors | Erro da série é `resultado` em `verificacao` ou `estorno_falhou`. `ESTORNO_EM_REVISAO` conta como `verificacao`. `PENDENTE` conta como `ok` (caminho feliz), fora da taxa. Timeout, desistência do aplicativo e HTTP 5xx são contados no contador HTTP `http_server_requests_seconds`, e a taxa de erro do painel soma as duas fontes. | série `checkout_operacao_duracao_seconds` somada a `http_server_requests_seconds`. `sem_cobranca` é cancelamento sem captura (inclusive estoque esgotado), resultado de negócio, e fica fora da taxa de erro. |
 | Duration | p50, p99, fração acima de 1 s, por versão | `histogram_quantile` sobre `checkout_operacao_duracao_seconds_bucket` |
 
 Conta da média de 120 ms, reproduzida por `mediaDe120msEscondeP99De2570ms`:

@@ -520,12 +520,12 @@ public final class CheckoutService {
 
     static String resultadoDe(EstadoPedido estado) {
         return switch (estado) {
-            case CONCLUIDO, PAGO -> "ok";
+            case CONCLUIDO, PAGO, PENDENTE -> "ok";
             case CANCELADO_SEM_COBRANCA -> "sem_cobranca";
             case CANCELADO_COM_ESTORNO, ESTORNANDO -> "estornado";
             case ESTORNO_FALHOU -> "estorno_falhou";
             case AGUARDANDO_PAGAMENTO -> "pix_pendente";
-            case PENDENTE, ESTOQUE_EM_VERIFICACAO, PAGAMENTO_EM_VERIFICACAO,
+            case ESTOQUE_EM_VERIFICACAO, PAGAMENTO_EM_VERIFICACAO,
                     CONFIRMACAO_EM_VERIFICACAO, ESTORNO_EM_REVISAO -> "verificacao";
         };
     }

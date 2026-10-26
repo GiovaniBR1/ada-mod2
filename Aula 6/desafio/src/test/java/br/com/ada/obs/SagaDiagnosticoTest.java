@@ -289,8 +289,10 @@ class SagaDiagnosticoTest {
         assertThat(c.service.pedido("48213").estado()).isEqualTo(EstadoPedido.ESTORNANDO);
         assertThat(c.service.pedido("48213").pagamentoCapturado()).isTrue();
         assertThat(CheckoutService.resultadoDe(EstadoPedido.PAGO)).isEqualTo("ok");
+        assertThat(CheckoutService.resultadoDe(EstadoPedido.PENDENTE)).isEqualTo("ok");
         assertThat(CheckoutService.resultadoDe(EstadoPedido.ESTORNANDO)).isEqualTo("estornado");
         assertThat(CheckoutService.resultadoDe(EstadoPedido.PAGAMENTO_EM_VERIFICACAO)).isEqualTo("verificacao");
+        assertThat(CheckoutService.resultadoDe(EstadoPedido.ESTORNO_EM_REVISAO)).isEqualTo("verificacao");
     }
 
     @Test
