@@ -119,7 +119,7 @@ histogram_quantile(0.99, sum by (le, versao) (rate(checkout_operacao_duracao_sec
 | p99 de `finalizar` acima de 800 ms por 2 min, com pelo menos 100 chamadas na janela | 3,0 s e também 6,0 s | |
 | `checkout_http_em_andamento` acima do dobro da base de 10 min, por 1 min | 1.388 contra base 588 | |
 | `checkout_pedidos_em_aberto` ou verificação com mais de 5 min | saga parada depois do HTTP 202 | 5 min aqui é limiar de alerta, não o poll de `proxima_tentativa_em` nem o `prazo_passo`. O teste chama `reconciliar` direto |
-| conversão abaixo de 0,97 por 3 min | a queda que o chamado descreveu | 0,97 é decisão; a aula não publica a conversão normal |
+| conversão da coorte com entrada há mais de 15 min; terminais no denominador; limiar = taxa da hora anterior | a queda que o chamado descreveu | a aula não publica a conversão normal; Pix não pago e estoque esgotado são desfecho normal |
 | média acima de 300 ms | | 120 ms e 238 ms |
 | CPU acima de 80% como único sinal | | a CPU do incidente estava abaixo de 40% |
 
