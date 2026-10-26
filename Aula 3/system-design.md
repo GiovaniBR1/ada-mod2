@@ -4,7 +4,7 @@
 
 Aqui entram JPA (a biblioteca Java que mapeia objeto em tabela), PostgreSQL 17 e Flyway (mudanças de tabela).
 
-Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+Tabelas: [anexo](anexo-detalhes.md).
 
 ## 1. Decisão de Armazenamento e Chave Primária (PK)
 
@@ -35,9 +35,9 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
 - **Tabelas da compra:**
   > Id é `uuid` v7. Dinheiro é `numeric(12,2)`. Status é `text` com `CHECK` (o banco recusa valor fora da lista).
   > A chave de idempotência tem `UNIQUE (chave)` em `idempotency_keys`. O pagamento tem `UNIQUE (order_id)`.
-  > `pagamento.status`: `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`. É o cartão síncrono, antes do Pix com QR.
+  > `pagamento.status` nesta aula: `PENDENTE`, `APROVADO`, `RECUSADO` e `EXPIRADO`.
   > `order_status` nesta aula: `PENDENTE` e `PAGAMENTO_EM_VERIFICACAO`. `processing` e `delivered` são o valor antigo do exercício, só na consulta do incidente.
-  > A mesma coluna depois se chama `status` e ganha os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Uma coluna só. [Modelo](anexo-detalhes.md#modelo).
+  > Quando o pagamento vem `APROVADO`, a reserva fica `CONFIRMADA` e `order_status` permanece `PENDENTE`. Só timeout ou 500 trocam esse token para `PAGAMENTO_EM_VERIFICACAO`. [Modelo](anexo-detalhes.md#modelo).
 
 ## 2. A Dualidade da Concorrência: Locks e Mitigações
 
@@ -47,8 +47,7 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
 - **Justificativa:**
   > A escolha é lock otimista (`@Version`): não trava a linha, confere a versão ao gravar.
   > Zero linhas viram `OptimisticLockException`. Quem perde relê e não reabre o que fechou.
-  > `AND status = 'PENDENTE'` segura o caminho normal. Esse `PENDENTE` é só timeout ou 500 na linha de pagamento.
-  > A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). [Pagamento](anexo-detalhes.md#pagamento).
+  > `AND status = 'PENDENTE'` segura o caminho normal. Esse `PENDENTE` é só timeout ou 500 na linha de pagamento. [Pagamento](anexo-detalhes.md#pagamento).
 
 ### 2.2 Controle de Estoque Concorrente (Alta contenção no mesmo registro)
 
@@ -89,7 +88,7 @@ Tabelas: [anexo](anexo-detalhes.md). Linha de pagamento: [regra única](../Aula%
 ## 4. Os Edge Cases (Engenharia do Caos)
 
 1. **E se...** a resposta atrasada e a reconciliação fecharem o mesmo `PENDENTE` com resultados diferentes?
-   - **Resposta do Sistema:** Os dois leem a versão 3. O primeiro grava a versão 4. O segundo toma `OptimisticLockException` e para. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+   - **Resposta do Sistema:** Os dois leem a versão 3. O primeiro grava a versão 4. O segundo toma `OptimisticLockException` e para.
 2. **E se...** o pagamento for recusado ou expirar com a última unidade já reservada?
    - **Resposta do Sistema:** Grava `RECUSADO` ou `EXPIRADO` e libera a reserva se ela está `ATIVA`. Sem linha, a reserva espera a consulta. Cobrança sem linha: a reconciliação insere. Linha `PENDENTE`: só fecha.
 3. **E se...** a migration do índice travar as gravações no pico?

@@ -1,6 +1,6 @@
 # Anexo da Aula 3 — tabelas, contas e planos
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam as tabelas, o SQL, os planos e o diagrama. A regra da linha de pagamento é a [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+O texto principal responde cada pergunta em poucas linhas. Aqui ficam as tabelas, o SQL, os planos e o diagrama.
 
 <a id="fronteira"></a>
 ## Fronteira de consistência
@@ -47,7 +47,7 @@ IDs são `uuid` v7; dinheiro é `numeric(12,2)`, nunca `float`; datas são `time
 | `produto` | `sku text`, `nome text`, `preco numeric(12,2)`, `atributos jsonb` | PK `sku`; `CHECK (preco > 0)`. É daqui que sai o preço cobrado. |
 | `estoque` | `sku text`, `disponivel int` | PK e FK `sku` → `produto`; `CHECK (disponivel >= 0)`. Sem `@Version`: a trava é o `UPDATE` atômico. |
 | `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK (order_status IN ('PENDENTE','PAGAMENTO_EM_VERIFICACAO'))`; `@Version`. São os estados que esta aula grava: `PENDENTE` na T1 e `PAGAMENTO_EM_VERIFICACAO` no timeout ou 500. `processing` e `delivered` são só o valor legado do exercício, na consulta do incidente (`order_status = 'processing'`). Na Aula 4 a coluna passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. |
-| `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 2 e 4; `@Version`. |
+| `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`, o cartão síncrono desta aula; `@Version`. |
 | `reserva` | `id uuid`, `order_id uuid`, `sku text`, `qtd int`, `status text`, `expira_em timestamptz` | FKs para `pedidos` e `estoque`; `UNIQUE (order_id, sku)`; `CHECK (qtd > 0)`; `CHECK (status IN ('ATIVA','CONFIRMADA','LIBERADA'))`; `expira_em NOT NULL`. |
 | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | PK `id`; `UNIQUE (chave)`; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
 
@@ -78,7 +78,7 @@ class Pagamento {
 }
 ```
 
-O Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Zero linhas viram `OptimisticLockException` (`ObjectOptimisticLockingFailureException`). A cláusula `AND status = 'PENDENTE'` segura o caminho sem JPA. A exceção do Pix atrasado está na regra única.
+O Hibernate grava `UPDATE pagamento SET status = ?, version = version + 1 WHERE id = ? AND version = ?`. Zero linhas viram `OptimisticLockException` (`ObjectOptimisticLockingFailureException`). A cláusula `AND status = 'PENDENTE'` segura o caminho sem JPA.
 
 <a id="estoque"></a>
 ## Estoque
@@ -172,7 +172,7 @@ Não aprovar um índice por coluna.
 <a id="diagrama"></a>
 ## Diagrama
 
-Caminho síncrono, antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce com o QR. A exceção do Pix atrasado está na regra única da Aula 4.
+Caminho síncrono do cartão.
 
 ```mermaid
 sequenceDiagram

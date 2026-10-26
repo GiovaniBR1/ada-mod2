@@ -14,7 +14,7 @@ Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
 
 **Por quê.** "Lê, decide no Java, grava" deixa o último a escrever por cima do primeiro. Se o job gravar `EXPIRADO` depois de um `APROVADO`, devolve a unidade de um cliente que foi cobrado. O `@Version` vira `UPDATE ... WHERE id = ? AND version = ?`. Zero linhas lançam `OptimisticLockException` e desfazem a liberação de estoque que estava na mesma transação. A cláusula `AND status = 'PENDENTE'` segura também um caminho sem JPA.
 
-**Exemplo.** Pagamento `PG-10`, `PENDENTE`, `version = 3`, reserva `ATIVA`, estoque 4. Job e réplica leem a versão 3. A réplica commita `APROVADO` e `version = 4`, reserva `CONFIRMADA`. O `UPDATE` do job com `version = 3` afeta 0 linhas. O estoque continua 4. Se o job tivesse vencido, o pagamento ficaria `EXPIRADO`. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+**Exemplo.** Pagamento `PG-10`, `PENDENTE`, `version = 3`, reserva `ATIVA`, estoque 4. Job e réplica leem a versão 3. A réplica commita `APROVADO` e `version = 4`, reserva `CONFIRMADA`. O `UPDATE` do job com `version = 3` afeta 0 linhas. O estoque continua 4. Se o job tivesse vencido, o pagamento ficaria `EXPIRADO`.
 
 **Como testamos.** Testcontainers com PostgreSQL 17.
 
