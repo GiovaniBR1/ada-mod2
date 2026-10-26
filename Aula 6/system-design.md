@@ -29,7 +29,7 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
   > Pagamento confirmado com dinheiro em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`. Sem captura, o estado não muda. Webhook sem o nosso trace reusa o `trace_id` do pedido; HMAC errado responde 401. Detalhe: [anexo, propagação](anexo-detalhes.md#propagacao).
 - **LGPD nos Logs:** Quais dados de cliente ficam fora de logs e traces? Para os identificadores que precisam aparecer, qual tratamento você aplica e quem pode ler esses registros?
   > Decisão: ficam fora de log, trace e label: CPF, nome, e-mail, telefone, endereço, cartão, CVV e IP completo. Corpo com `cpf`, `email` ou `cartao` recebe HTTP 400.
-  > `order_id` entra na linha, com acesso restrito: ainda é dado pessoal. `cliente_ref` é HMAC-SHA256 do CPF, 12 hex, chave no cofre. Com a chave, a associação volta (Lei 13.709/2018, art. 5º, XI, art. 12 e art. 13, §4º).
+  > `order_id` entra na linha, com acesso restrito: ainda é dado pessoal. `cliente_ref` é HMAC-SHA256 do CPF, 12 hex, chave no cofre. Com a chave a associação volta, então segue dado pessoal (Lei 13.709/2018, art. 12). O art. 13, §4º só define a técnica de pseudonimização, e é norma de pesquisa em saúde.
   > Por quê: o agregado "2% da versão nova passou de 1 s" perde o caminho até a pessoa. O `cliente_ref` não. Prazos desta entrega (art. 6º, III): trace 7 dias, log com `order_id` 15 dias, métrica agregada 30 dias. A lei não fixa esses dias.
   > Exemplo: o CPF `39053344705` não aparece na linha. Engenharia vê o painel sem `order_id`. Plantão lê a linha com login registrado. Tabela: [anexo, LGPD](anexo-detalhes.md#lgpd).
 
@@ -76,4 +76,4 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
 
 ## Referências usadas
 
-OpenTelemetry, "Sampling" (head decide no início; tail decide com os spans em mãos; `decision_wait` é a espera antes da decisão); W3C Trace Context (`traceparent`, ids só de zeros inválidos); Lei 13.709/2018, art. 5º, XI, art. 6º, III, art. 12 e art. 13, §4º; Grafana, "The RED Method"; Brendan Gregg, "The USE Method"; Prometheus, "Metric and label naming" e "Histograms and summaries"; Google SRE Book, "Postmortem Culture"; Grafana k6, "Spike testing".
+OpenTelemetry, "Sampling" (head decide no início; tail decide com os spans em mãos; `decision_wait` é a espera antes da decisão); W3C Trace Context (`traceparent`, ids só de zeros inválidos); Lei 13.709/2018, art. 6º, III, art. 12 e art. 13, §4º; Grafana, "The RED Method"; Brendan Gregg, "The USE Method"; Prometheus, "Metric and label naming" e "Histograms and summaries"; Google SRE Book, "Postmortem Culture"; Grafana k6, "Spike testing".
