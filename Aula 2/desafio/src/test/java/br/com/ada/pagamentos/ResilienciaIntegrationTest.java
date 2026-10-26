@@ -194,6 +194,17 @@ class ResilienciaIntegrationTest {
     }
 
     @Test
+    void recusa402_devolve402_eNaoAbreOCircuito() throws Exception {
+        parceiroResponde(402, "{}", 0);
+        var k = chave();
+        pagar(k).andExpect(status().isPaymentRequired())
+                .andExpect(jsonPath("$.status").value("RECUSADO"));
+        assertThat(cb().getState()).isEqualTo(CircuitBreaker.State.CLOSED);
+        pagar(k).andExpect(status().isPaymentRequired());
+        assertThat(chamadasAoParceiro()).isEqualTo(1);
+    }
+
+    @Test
     void mesmaChaveComOutroCorpo_devolve422() throws Exception {
         parceiroAprova();
         var k = chave();

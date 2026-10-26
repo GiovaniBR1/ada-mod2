@@ -1,6 +1,6 @@
 # Anexo da Aula 2 — padrões, chave e testes
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam a tabela dos padrões, o YAML, o ciclo da chave, o diagrama e os cenários de teste. A regra da linha de pagamento é a [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+O texto principal responde cada pergunta em poucas linhas. Aqui ficam a tabela dos padrões, o YAML, o ciclo da chave, o diagrama e os cenários de teste.
 
 <a id="paradigma"></a>
 ## Paradigma
@@ -32,7 +32,7 @@ Ordem padrão das anotações do Resilience4j: `Retry ( CircuitBreaker ( RateLim
 Fallback: na dúvida, nega; falha nunca vira "aprovado".
 
 - Circuito aberto, bulkhead cheio ou rate limit estourado: sabemos que não chamamos o parceiro. Responde `503` com `Retry-After`; o cliente pode tentar de novo com a mesma chave.
-- Timeout ou 500 depois de enviar: não sabemos se cobrou. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`). A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+- Timeout ou 500 depois de enviar: não sabemos se cobrou. O pagamento fica `PENDENTE` e a resposta é `202 { "status": "PENDENTE" }`. Um job de reconciliação consulta o parceiro pela chave do pedido e fecha em `APROVADO`, `RECUSADO` ou `EXPIRADO`. O fechamento só sai de `PENDENTE` (`UPDATE ... WHERE status = 'PENDENTE'`).
 
 Valores iniciais de exemplo, a calibrar com métrica real (p99 do parceiro, taxa de erro).
 
@@ -82,7 +82,7 @@ Um prazo (`travado_ate`) no `EM_PROCESSAMENTO` evita chave presa se a réplica c
 | Tabela | Campos | Constraints |
 |---|---|---|
 | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | `UNIQUE (chave)`; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
-| `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint` | `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 3 e 4. |
+| `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint` | `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`, o cartão síncrono desta aula. |
 
 Cartão recusado encerra a compra. Um `402` é resposta final daquela chave: repetir devolve o mesmo `402`; trocar o cartão com a mesma chave muda o corpo e dá `422`. Outro cartão é um checkout novo, com chave nova e pedido novo.
 
@@ -112,7 +112,7 @@ sequenceDiagram
   end
 ```
 
-Este diagrama é o caminho síncrono (cartão), antes do Pix com QR. `AGUARDANDO_CAPTURA` nasce quando o QR é criado, na Aula 4. Três respostas 503 ou 429 do parceiro gravam `PENDENTE`; não caem no ramo que libera a chave. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). Sem linha e com cobrança no parceiro, a reconciliação insere a linha. Com linha `PENDENTE`, só fecha.
+Este diagrama é o caminho síncrono (cartão). Três respostas 503 ou 429 do parceiro gravam `PENDENTE`; não caem no ramo que libera a chave. Sem linha e com cobrança no parceiro, a reconciliação insere a linha. Com linha `PENDENTE`, só fecha.
 
 <a id="testes"></a>
 ## Testes
@@ -121,7 +121,7 @@ WireMock no lugar do parceiro, num teste de integração com o Spring de verdade
 
 | Cenário injetado | O que o teste afirma |
 |---|---|
-| Latência de 10 s (`withFixedDelay(10_000)`) | A resposta volta em ~2 s (timeout + margem), com `202 PENDENTE`; nunca `201`. Depois, as vagas do bulkhead voltam ao máximo: a thread foi liberada. |
+| Latência de 3 s (`withFixedDelay(3_000)`) | A resposta volta em ~2 s (timeout de leitura), com `202 PENDENTE`; nunca `201`. Depois, as vagas do bulkhead voltam ao máximo: a thread foi liberada. |
 | 500 / conexão derrubada (`withFault(CONNECTION_RESET_BY_PEER)`) repetidos | Após `minimum-number-of-calls` com taxa acima do limite, o estado vai a `OPEN` (lido no `CircuitBreakerRegistry`). |
 | Circuito aberto | A próxima chamada responde `503` em poucos ms e o WireMock não recebe requisição nova (`verify(exactly(n), ...)`). |
 | Recuperação (no teste, `wait-duration-in-open-state` curto) | Stub volta a `200`, o estado passa a `HALF_OPEN` e, com as chamadas de teste ok, `CLOSED`. |

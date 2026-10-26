@@ -82,7 +82,7 @@ src/main/java/br/com/ada/pagamentos/
   PagamentoController.java     POST /pagamentos + anotações OpenAPI com todos os códigos
   TratadorGlobalDeErros.java   @RestControllerAdvice -> Problem Details
   Excecoes.java                exceções de integração
-src/test/java/.../ResilienciaIntegrationTest.java  14 testes com WireMock + MockMvc
+src/test/java/.../ResilienciaIntegrationTest.java  15 testes com WireMock + MockMvc
 saida-execucao.txt            saída real dos testes e da app rodando
 ```
 
@@ -91,7 +91,7 @@ saida-execucao.txt            saída real dos testes e da app rodando
 Pré-requisitos: JDK 21 e Maven 3.9 (`sudo apt install openjdk-21-jdk-headless maven`).
 
 ```bash
-mvn test                                   # roda os 14 testes (WireMock sobe sozinho)
+mvn test                                   # roda os 15 testes (WireMock sobe sozinho)
 mvn spring-boot:run                        # sobe a API em http://localhost:8080
 # Swagger UI: http://localhost:8080/swagger-ui.html   | contrato: /v3/api-docs
 curl -i -X POST localhost:8080/pagamentos -H 'Content-Type: application/json' \
@@ -100,10 +100,10 @@ curl -i -X POST localhost:8080/pagamentos -H 'Content-Type: application/json' \
 
 Sem parceiro de verdade em `localhost:9999`, a app responde `503` (conexão recusada) e, depois de 4 falhas, `503` de **circuito aberto**. Para brincar com o httpbin (dica do enunciado), troque `parceiro.base-url`; note que o caminho usado é `/cobrancas`.
 
-## Resultados reais (14/10/2026, horário de Brasília)
+## Resultados reais (26/10/2026, horário de Brasília)
 
-`mvn test`: **14 testes, 0 falhas, BUILD SUCCESS** (Java 21.0.12, Maven 3.9.9). Destaques do log:
-- parceiro com **3 s** de atraso → nossa API respondeu em **2016 ms** com `202 PENDENTE` (cortou no read timeout de 2 s).
+`mvn test`: **15 testes, 0 falhas, BUILD SUCCESS** (Java 21.0.12, Maven 3.9.9). Destaques do log:
+- parceiro com **3 s** de atraso → nossa API respondeu em **2031 ms** com `202 PENDENTE` (cortou no read timeout de 2 s).
 - circuito **OPEN** → nossa API respondeu em **2 ms** com `503` + `Retry-After: 2`, sem nova chamada ao parceiro.
 
 | Teste | Prova |
@@ -119,6 +119,7 @@ Sem parceiro de verdade em `localhost:9999`, a app responde `503` (conexão recu
 | circuitoAberto_respondeNaHora503_semChamarParceiro | < 200 ms, contagem do WireMock não muda |
 | recuperacao_OPEN_HALFOPEN_CLOSED | OPEN → (2 s) → HALF_OPEN → CLOSED, respostas 201 |
 | reenvioAposTimeout_devolveMesma202_semNovaChamada | mesmo 202, parceiro chamado 1 vez |
+| recusa402_devolve402_eNaoAbreOCircuito | 402 gravado, circuito CLOSED, repetir não chama de novo |
 | mesmaChaveComOutroCorpo_devolve422 | 422 |
 | duasRequisicoesSimultaneasMesmaChave_umaVence_outraRecebe409 | uma 201, outra 409, 1 chamada |
 | contingenciaTambemFalha_devolve500ProblemDetails_semStackTrace | 500 Problem Details, sem "Exception" no corpo |
@@ -130,4 +131,4 @@ Também subimos a app de verdade (`java -jar`) e chamamos com `curl`: 4×`503 pa
 - **Variação A, teste de carga** (k6/locust): as threads virtuais estão **ligadas**, mas não rodei o teste de carga.
 - **Variação B (WebFlux)**: não feita; o design da aula escolheu MVC + threads virtuais.
 - **Reconciliação** do `PENDENTE` e **banco real** (`UNIQUE`): simulados em memória.
-- A espera de 200 ms entre retentativas está no YAML do anexo. O laboratório repete na hora, para o teste acabar. A janela do disjuntor no `application.yml` continua curta (4 chamadas, aberto 2 s); o desenho usa 50 / 20 / 30 s.
+- A espera de 200 ms entre retentativas está no YAML do anexo. O laboratório repete na hora, para o teste acabar. A janela do disjuntor no `application.yml` continua curta (4 chamadas, aberto 2 s, lenta a 900 ms em 50%, 2 em half-open); o desenho usa 50 / 20 / 1.500 ms / 60% / 30 s / 5.

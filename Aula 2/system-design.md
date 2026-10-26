@@ -1,6 +1,6 @@
 # System Design: Aula 02 - APIs Resilientes
 
-YAML, tabelas e o diagrama estão no [anexo](anexo-detalhes.md). A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
+YAML, tabelas e o diagrama estão no [anexo](anexo-detalhes.md).
 
 ## 1. Escolha de Paradigma da API
 
@@ -28,7 +28,8 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   > Retentativa: no máximo 3 chamadas, contando a primeira, só falha de conexão e HTTP 503 ou 429, sempre a mesma chave. Se as três voltarem 503 ou 429, grava `PENDENTE` e reconcilia pela mesma chave.
   > Disjuntor aberto, bulkhead cheio ou cota estourada: respondemos 503 com `Retry-After`, sem linha de pagamento.
   > Timeout ou 500 depois de enviar: 202 com `PENDENTE`. A reconciliação só fecha essa linha com `WHERE status = 'PENDENTE'`.
-  > Ordem e YAML: [anexo, padrões](anexo-detalhes.md#padroes). O laboratório usa a mesma retentativa de 3 chamadas, connect de 1 s e read de 2 s. A janela do disjuntor no arquivo de teste é menor (4 chamadas, aberto 2 s) para o teste acabar.
+  > Ordem e YAML: [anexo, padrões](anexo-detalhes.md#padroes). O laboratório usa retentativa de 3 chamadas, connect de 1 s e read de 2 s.
+  > No arquivo de teste o disjuntor é menor: 4 chamadas, aberto 2 s, lenta a 900 ms em 50%, e 2 em half-open.
 
 - **Proteção contra Duplicidade:**
   Como a `Idempotency-Key` será utilizada na requisição do Checkout para evitar cobranças duplas? Qual o ciclo de vida dessa chave?
@@ -39,7 +40,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
   > Um 503 em que a chamada não saiu libera a chave e não cria pagamento. Três respostas 503 ou 429, ou um timeout ou 500, gravam `PENDENTE`. A chave vale 24 h.
   > Se a réplica cair, o prazo `travado_ate` vence. Com cobrança no parceiro, a reconciliação insere a linha. Sem cobrança, libera a chave.
   > Cartão recusado encerra o pedido. Outro cartão é um checkout novo.
-  > O `CHECK` (o banco recusa valor fora da lista) de `pagamento.status` é `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO` e `EXPIRADO`. Ciclo e diagrama: [anexo, idempotência](anexo-detalhes.md#idempotencia).
+  > O `CHECK` (o banco recusa valor fora da lista) de `pagamento.status` é `PENDENTE`, `APROVADO`, `RECUSADO` e `EXPIRADO`. Ciclo e diagrama: [anexo, idempotência](anexo-detalhes.md#idempotencia).
 
 ## 3. Os Edge Cases (Engenharia do Caos)
 
@@ -55,7 +56,7 @@ Dependemos de uma API terceira instável. Quais recursos do padrão de resiliên
 - **Estratégia:** Como você vai garantir que o Circuit Breaker abre na hora certa e o Timeout não deixa a Thread presa?
   > O teste sobe o Spring de verdade, com WireMock no lugar do parceiro. WireMock é um servidor falso.
   > O teste falha até a configuração existir. Falha de rede usa Testcontainers (sobe o programa de verdade) e Toxiproxy (estraga a rede de propósito).
-  > Uma resposta de 10 s volta em cerca de 2 s, com 202 e `PENDENTE`, nunca 201. As vagas do bulkhead voltam.
+  > Uma resposta de 3 s volta em cerca de 2 s, com 202 e `PENDENTE`, nunca 201. As vagas do bulkhead voltam.
   > Depois do mínimo de chamadas, o disjuntor abre. A próxima responde 503 e o WireMock não recebe nada. Timeout gera exatamente 1 chamada ao parceiro.
   > Duas requisições com a mesma chave: uma 201 e uma 409. Recusa 402 deixa o disjuntor fechado. Outro cartão na mesma chave: 422.
   > No sandbox do parceiro, a mesma chave cobra uma vez. Tabela: [anexo, testes](anexo-detalhes.md#testes).
