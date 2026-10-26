@@ -48,10 +48,10 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
   > Exemplo: pool 10/10, fila 200, CPU 15%, HTTP 500 = 0. Com a fila em zero o alerta fica em silêncio. Se o `finalizar` responde 202 em 120 ms e o consumidor para, sobem o lag e `checkout_pedidos_em_aberto`.
   > Teto global = 1,5 vez a soma medida na hora anterior. O exemplo 20% × 5.000 × 30 s × R$ 180 só mostra a forma e não vira limiar. R$ 2.000 e R$ 8.000.000 no `application.yml` são fixture; o teste usa R$ 100 e dois pedidos de R$ 80. Tabela: [anexo, USE](anexo-detalhes.md#use).
 - **Labels:** Quais labels você permite nessas métricas e quais proíbe? Diga o efeito de cada escolha no servidor de métricas.
-  > Decisão: `servico` (3), `operacao` (5), `resultado` (6: `ok`, `sem_cobranca`, `estornado`, `estorno_falhou`, `pix_pendente`, `verificacao`) e `versao` (2). São 3 × 5 × 6 × 2 = 180, e 180 × 11 = 1.980 séries. `PAGO` e `PENDENTE` contam como `ok`. `ESTORNANDO` conta como `estornado`, fora da taxa dentro do prazo. `ESTORNO_EM_REVISAO` conta como `verificacao` e entra na taxa, junto com `estorno_falhou`.
+  > Decisão: `servico` (3), `operacao` (5), `resultado` (6: `ok`, `sem_cobranca`, `estornado`, `estorno_falhou`, `pix_pendente`, `verificacao`) e `versao` (2). São 3 × 5 × 6 × 2 = 180, e 180 × 11 = 1.980 séries. O 11 são 9 baldes (0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf) mais `_sum` e `_count`. `PAGO` e `PENDENTE` contam como `ok`. `ESTORNANDO` conta como `estornado`, fora da taxa dentro do prazo. `ESTORNO_EM_REVISAO` conta como `verificacao` e entra na taxa, junto com `estorno_falhou`.
   > Proibidos: `order_id`, `trace_id`, `user_id`, `cpf`, `email` e `sku_id`.
   > Por quê: um valor novo por pedido não tem teto. `order_id` fica no log, não na série. Sem `versao`, a média dos p99 (790 ms) esconderia o canary.
-  > Exemplo: 1.000 observações em `v1` e `v2` geram 2 séries. `order_id` em um minuto seria 300.000 × 11 = 3,3 milhões de séries. Efeito de cada proibido: [anexo, labels](anexo-detalhes.md#labels).
+  > Exemplo: 1.000 observações em `v1` e `v2` geram 2 séries. `order_id` em um minuto seria 300.000 × 11 (os mesmos 9 baldes mais `_sum` e `_count`) = 3,3 milhões de séries. Efeito de cada proibido: [anexo, labels](anexo-detalhes.md#labels).
 
 ---
 

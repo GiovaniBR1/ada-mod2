@@ -141,7 +141,7 @@ O teto em reais não é chutado. A aula não diz a fração de Pix nem o ticket.
 
 | Label proibido | Efeito no servidor de métricas |
 | :--- | :--- |
-| `order_id` | 5.000/s × 60 s = 300.000 ids num minuto × 11 séries = 3,3 milhões de séries por minuto. O teste recusa com exceção. |
+| `order_id` | 5.000/s × 60 s = 300.000 ids num minuto × 11 séries = 3,3 milhões de séries por minuto. O 11 são 9 baldes (0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf) mais `_sum` e `_count`. O teste recusa com exceção. |
 | `trace_id` | Um valor por requisição. A mesma explosão. O trace já guarda esse id. |
 | `user_id` | Uma série por cliente. No pico o conjunto cresce o tempo todo, e o id da pessoa iria para o banco de métricas. |
 | `cpf` e `email` | O mesmo crescimento, e ainda é dado pessoal dentro do TSDB (o banco de séries do Prometheus). |
