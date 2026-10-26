@@ -60,7 +60,7 @@ Contas, PromQL, tabelas e o roteiro de testes estão no [anexo](anexo-detalhes.m
 - **A Escolha:** ( ) Head Sampling  (X) Tail Sampling  ( ) Combinação das duas
 - **Justificativa:** Guardar 100% dos traces a 5.000 TPS custa caro. Qual é a sua regra de retenção, e como ela evita que justamente as requisições que travaram sejam descartadas?
   > Decisão: tail puro no collector. O SDK usa `AlwaysOn`. Head na entrada descarta o lento antes de existir duração.
-  > Regra: 100% com erro, 100% acima de 800 ms, 100% em verificação ou `ESTORNO_FALHOU`, 1% do resto pelo trace-id. `decision_wait` de 15 s é maior que o maior timeout da cadeia (8 s no Estoque e no aplicativo, 5 s no Pagamento). Com 2 s, o span de 8 s ainda não chegou e cai no 1%.
+  > Regra: 100% com erro, 100% acima de 800 ms, 100% em verificação ou `ESTORNO_FALHOU`, 1% do resto pelo trace-id. `decision_wait` de 15 s é maior que o maior timeout da chamada síncrona do cliente (Checkout ao Estoque, 8 s; Checkout ao Pagamento, 5 s). O trace de que o tail sampling decide é essa requisição síncrona. A espera do Pix (15 min) e as retentativas do estorno são outros traces, ligados por `order_id` e links de span, e não entram no `decision_wait`. Com 2 s, o span de 8 s ainda não chegou e cai no 1%.
   > Por quê: a regra dos 800 ms precisa ver a espera. O histograma não entra nessa amostra: toda chamada soma no balde.
   > Exemplo de custo, premissa de 6 spans e cerca de 1 KB: 100% seriam 30 MB/s (cerca de 2,6 TB/dia). Com a regra, cerca de 150 traces/s e 80 GB/dia. Na janela de 15 s cabem 75.000 traces, cerca de 450 MB; o collector pede 2 GB. Prazo: 7 dias. Conta: [anexo, traces](anexo-detalhes.md#traces).
 
