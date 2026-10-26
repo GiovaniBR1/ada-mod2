@@ -13,11 +13,11 @@ Para rodar (Java 21): `java SagaCompra.java`.
 | Cenário | Resultado | O que prova |
 |---|---|---|
 | 1. Caminho feliz | `CONCLUIDO`, reserva `CONFIRMADA` | A sequência reservar, cobrar, confirmar. |
-| 2. O incidente: Pix aprovado, reserva já expirada e vendida | `PAGO` → `ESTORNANDO` → `CANCELADO`, 1 devolução | A compensação dispara sozinha. |
-| 3. Estorno falha 2 vezes e passa na 3ª | `CANCELADO`, **1** devolução | Repetir não devolve em dobro (chave = id do pagamento). |
+| 2. O incidente: Pix aprovado, reserva já expirada e vendida | `PAGO` → `ESTORNANDO` → `CANCELADO_COM_ESTORNO`, 1 devolução | A compensação dispara sozinha. |
+| 3. Estorno falha 2 vezes e passa na 3ª | `CANCELADO_COM_ESTORNO`, **1** devolução | Repetir não devolve em dobro (chave = id do pagamento). |
 | 4. Estorno falha sempre | `ESTORNO_EM_REVISAO` após 5 tentativas, pagamento ainda `APROVADO` | Nunca "cancelado" sem o dinheiro voltar. |
-| 5. Relay cai depois de publicar | Mensagem repetida no broker, descartada; `CANCELADO`, 1 devolução | A outbox não perde evento, e a entrega repetida é inofensiva. |
-| 6. Sem estoque desde o início | `CANCELADO`, nenhum pagamento | Reservar antes de cobrar evita a maioria dos estornos. |
+| 5. Relay cai depois de publicar | Mensagem repetida no broker, descartada; `CANCELADO_COM_ESTORNO`, 1 devolução | A outbox não perde evento, e a entrega repetida é inofensiva. |
+| 6. Sem estoque desde o início | `CANCELADO_SEM_COBRANCA`, nenhum pagamento | Reservar antes de cobrar evita a maioria dos estornos. |
 
 ## Limites (o que a simulação não mostra)
 

@@ -41,7 +41,7 @@ Devolver, e não reabrir o pedido, é a escolha: a unidade pode não existir mai
 2. `503` duas vezes e `200` na terceira. A mesma chave em todas. Uma devolução.
 3. `503` sempre. Depois de cinco tentativas, `ESTORNO_EM_REVISAO`, uma mensagem na DLQ, nunca `CANCELADO_COM_ESTORNO`.
 
-O `desafio/SagaCompra.java` cobre os casos 2 e 3 em memória e ainda imprime um `CANCELADO` só. Os nomes separados estão no apêndice. O laboratório não foi alterado.
+O `desafio/SagaCompra.java` cobre os casos 2 e 3 em memória e imprime `CANCELADO_COM_ESTORNO`.
 
 ---
 
