@@ -66,8 +66,14 @@ class Pagamento {
   @Enumerated(EnumType.STRING) StatusPagamento status;
 
   void fechar(StatusPagamento novo) {
-    if (status != StatusPagamento.PENDENTE) return;   // já fechado: ignora
+    if (status != StatusPagamento.PENDENTE) return;   // caminho normal: ignora o que não é PENDENTE
     status = novo;
+  }
+
+  void capturaTardia() {
+    // webhook de captura tardia: WHERE status = 'EXPIRADO' → APROVADO
+    if (status != StatusPagamento.EXPIRADO) return;
+    status = StatusPagamento.APROVADO;
   }
 }
 ```
