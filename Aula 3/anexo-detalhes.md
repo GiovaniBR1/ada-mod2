@@ -129,26 +129,26 @@ Descartado: dividir o estoque em várias linhas ("baldes"). Só entra se o teste
 
 O laboratório (`desafio/README.md`) mediu outra consulta: `SELECT * FROM olist_orders WHERE customer_id = ?`, sem `order_status`. Antes: `Seq Scan`, 1.539 buffers, 6,5 ms, cerca de 100 mil linhas removidas. Depois de `CREATE INDEX idx_orders_customer ON olist_orders (customer_id)`: `Bitmap Heap Scan` com `Bitmap Index Scan`, 11 buffers, 0,06 ms. Não é `Index Scan` puro e não é a consulta do incidente.
 
-A consulta do incidente é `WHERE customer_id = ? AND order_status = 'processing'`. O índice é `(customer_id, order_status)`. A medição abaixo é outra: PostgreSQL 16, `pedidos` sintético com 200.000 linhas.
+A consulta do incidente é `WHERE customer_id = ? AND order_status = 'processing'`. O índice é `(customer_id, order_status)`. O bloco abaixo é ilustração de formato, não medição. PostgreSQL 17. Os números fecham entre si: 5 linhas devolvidas + 199.995 removidas pelo filtro = 200.000. Rode o EXPLAIN no seu banco.
 
-Antes (`Parallel Seq Scan`, 2.062 buffers, 7,5 ms):
+Antes, ilustração (`Seq Scan`, `loops=1`):
 
 ```text
-Gather  (actual time=0.174..7.530 rows=5 loops=1)
+Seq Scan on pedidos  (actual time=0.210..7.500 rows=5 loops=1)
+  Filter: ((customer_id = '…9f02'::uuid) AND (order_status = 'processing'::text))
+  Rows Removed by Filter: 199995
   Buffers: shared hit=2062
-  -> Parallel Seq Scan on pedidos  (actual time=1.271..4.388 rows=2 loops=2)
-       Filter: ((customer_id = '…9f02'::uuid) AND (order_status = 'processing'::text))
-       Rows Removed by Filter: 99998
-       Buffers: shared hit=2062
-Execution Time: 7.548 ms
+Planning Time: 0.080 ms
+Execution Time: 7.500 ms
 ```
 
-Depois de `CREATE INDEX idx_pedidos_cliente_status ON pedidos (customer_id, order_status)` (`Index Scan`, 8 buffers, 0,036 ms):
+Depois de `CREATE INDEX idx_pedidos_cliente_status ON pedidos (customer_id, order_status)`, ilustração (`Index Scan`, `loops=1`):
 
 ```text
-Index Scan using idx_pedidos_cliente_status on pedidos  (actual time=0.022..0.026 rows=5 loops=1)
+Index Scan using idx_pedidos_cliente_status on pedidos  (actual time=0.018..0.036 rows=5 loops=1)
   Index Cond: ((customer_id = '…9f02'::uuid) AND (order_status = 'processing'::text))
-  Buffers: shared hit=5 read=3
+  Buffers: shared hit=8
+Planning Time: 0.120 ms
 Execution Time: 0.036 ms
 ```
 

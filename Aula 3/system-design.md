@@ -92,7 +92,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
 - **Plano de Diagnóstico:** Qual é o seu processo técnico passo a passo para investigar a causa raiz dessa lentidão diretamente no banco de dados? Quais comandos, métricas ou planos você analisaria para comprovar a hipótese antes de propor qualquer mudança?
   > Decisão: provar a consulta antes de criar índice. Nenhum índice entra sem plano antes e depois.
   > Passos: métricas do Hikari (`active`, `pending`, `usage`); `pg_stat_activity` e `wait_event`; `pg_stat_statements` por `total_exec_time` e `mean_exec_time`; `EXPLAIN (ANALYZE, BUFFERS)`; `ANALYZE` se a estimativa mentir; repetir plano e carga depois do índice.
-  > Exemplo do laboratório, outra consulta (só `customer_id`): `Seq Scan`, 1.539 buffers, 6,5 ms; depois, `Bitmap Index Scan`, 11 buffers, 0,06 ms. A consulta do incidente pede o composto `(customer_id, order_status)`: plano sintético de 200.000 linhas, 7,5 ms e 2.062 buffers antes, 0,036 ms e 8 buffers depois.
+  > Exemplo do laboratório, outra consulta (só `customer_id`): `Seq Scan`, 1.539 buffers, 6,5 ms; depois, `Bitmap Index Scan`, 11 buffers, 0,06 ms. A consulta do incidente pede o composto `(customer_id, order_status)`. O plano do anexo é exemplo ilustrativo; rode o EXPLAIN no seu banco.
   > `EXPLAIN ANALYZE` executa; `UPDATE` só dentro de `ROLLBACK`. Planos: [anexo, diagnóstico](anexo-detalhes.md#diagnostico).
 
 ### 3.2 Decisão de Engenharia: A Abordagem de Índices
