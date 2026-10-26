@@ -13,7 +13,7 @@ Uma linha do pedido 48213 quando o PSP não responde:
 | Campo | Para que serve |
 | :--- | :--- |
 | `ts` | Ordenar o pedido e saber se caiu dentro do canary. |
-| `level` | `INFO` ou `ERROR`. Em produção, 100% das linhas de erro e das mudanças de estado que não são sucesso, e amostra de 5% do caminho feliz. |
+| `level` | `INFO` ou `ERROR`. Em produção: 100% de erro e de mudança de estado que não é sucesso; 5% do caminho feliz, inclusive `CONCLUIDO`. |
 | `service` | `checkout`, `pagamento` ou `estoque`. |
 | `trace_id` | A requisição inteira, igual nos três serviços. |
 | `span_id` | Reservar e confirmar têm o mesmo `trace_id` e `span_id` diferentes. |
@@ -23,7 +23,7 @@ Uma linha do pedido 48213 quando o PSP não responde:
 | `cliente_ref` | 12 hex. O CPF não entra na linha. |
 | `msg` | Frase fixa quando a resposta não chega: "consultando status antes de decidir". O teste procura essa frase e o `trace_id` na mesma linha. |
 
-Volume, decisão: a 5.000 pedidos/s, quatro linhas por pedido dariam 20.000 linhas/s. Com 5% do caminho feliz, cerca de 1.000 linhas/s, mais as linhas dos pedidos que travaram. O laboratório guarda todas as linhas na memória para o teste achar a frase.
+Volume, decisão: a 5.000 pedidos/s, quatro linhas por pedido dariam 20.000 linhas/s. Em produção: 100% de erro e de mudança de estado que não é sucesso; 5% do caminho feliz, inclusive `CONCLUIDO`. 5% de 20.000 são cerca de 1.000 linhas/s, mais as linhas dos pedidos que travaram. O laboratório guarda todas as linhas na memória para o teste achar a frase.
 
 | Estado | Dinheiro e estoque |
 | :--- | :--- |
