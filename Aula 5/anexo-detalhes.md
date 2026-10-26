@@ -61,7 +61,7 @@ Quatro motivos da convivência, em detalhe:
 ```sql
 -- V10__expand_estado_saga.sql
 SET lock_timeout = '3s';
-ALTER TABLE pedido ADD COLUMN estado_saga VARCHAR(40) NULL;
+ALTER TABLE pedidos ADD COLUMN estado_saga VARCHAR(40) NULL;
 ```
 
 A 5.000 TPS sempre há transações abertas. Um `ALTER` esperando trava quem chega depois. Se o Job não conseguir a trava em 3 s, desiste e tenta de novo, sem parar o checkout.
@@ -69,16 +69,7 @@ A 5.000 TPS sempre há transações abertas. Um `ALTER` esperando trava quem che
 <a id="mapa-de-pares"></a>
 ## Mapa de pares
 
-Este SQL é o esquema do laboratório (H2 em modo PostgreSQL, tabela `pedido` no singular). A tradução para o esquema da Aula 4:
-
-| Neste SQL (laboratório) | Na Aula 4 |
-| :--- | :--- |
-| `pedido` | `pedidos` |
-| `pedido.status_pagamento` | coluna antiga da v1.5; o estado vivo é `pedidos.status` |
-| `pedido.estado_saga` | `pedidos.status` |
-| `pagamento.pedido_id` | `pagamento.order_id` |
-| `pagamento.capturado` | `pagamento.status = 'APROVADO'` |
-| `pagamento.estorno_confirmado` | estorno concluído; o pedido fica `CANCELADO_COM_ESTORNO` |
+O script abaixo já está no modelo da Aula 4: tabela `pedidos`, `pagamento.order_id`, `pagamento.status` e a tabela `estorno`. `status_pagamento` é a coluna antiga da v1.5, lida só neste backfill. `estado_saga` é a coluna nova; na Aula 4 o estado vivo é `pedidos.status`. O `ELSE` de `CANCELADO` capturado e sem confirmação de estorno vai para `ESTORNO_EM_REVISAO`, balde único do legado. O `V4` do H2 não é este script: ainda copia `CONFIRMADO`, porque o teste espera esse token.
 
 Zero linha fora do mapa: um token que não está na tabela abaixo faz o script lançar exceção. Os doze estados do apêndice entram no mapa como o mesmo token, então uma linha que já os carrega não dispara essa exceção.
 
@@ -95,15 +86,16 @@ Zero linha fora do mapa: um token que não está na tabela abaixo faz o script l
 
 ```sql
 -- V11__backfill_estado_saga.sql
--- Esquema do laboratório (pedido, status_pagamento, pagamento.pedido_id).
--- Tradução para a Aula 4: tabela acima (pedidos, pedidos.status, pagamento.order_id).
+-- Modelo da Aula 4: pedidos, pagamento.order_id, pagamento.status, tabela estorno.
+-- status_pagamento: coluna antiga da v1.5. estado_saga: coluna nova (pedidos.status na Aula 4).
+-- ELSE de CANCELADO capturado e sem confirmação: ESTORNO_EM_REVISAO, balde único do legado.
 -- executeInTransaction=false no .conf, senão o COMMIT interno é recusado.
 CREATE OR REPLACE PROCEDURE pedido_backfill_estado_saga(batch_size int DEFAULT 5000)
 LANGUAGE plpgsql AS $$
 DECLARE n int;
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM pedido
+    SELECT 1 FROM pedidos
      WHERE estado_saga IS NULL
        AND status_pagamento NOT IN (
          'PENDENTE','ESTOQUE_EM_VERIFICACAO','AGUARDANDO_PAGAMENTO','AGUARDANDO_PIX',
@@ -114,7 +106,7 @@ BEGIN
     RAISE EXCEPTION 'status_pagamento sem mapa para estado_saga';
   END IF;
   LOOP
-    UPDATE pedido p SET estado_saga = CASE p.status_pagamento
+    UPDATE pedidos p SET estado_saga = CASE p.status_pagamento
       WHEN 'PENDENTE' THEN 'PENDENTE'
       WHEN 'ESTOQUE_EM_VERIFICACAO' THEN 'ESTOQUE_EM_VERIFICACAO'
       WHEN 'AGUARDANDO_PAGAMENTO' THEN 'AGUARDANDO_PAGAMENTO'
@@ -131,14 +123,19 @@ BEGIN
       WHEN 'ESTORNO_FALHOU' THEN 'ESTORNO_FALHOU'
       WHEN 'CANCELADO_COM_ESTORNO' THEN 'CANCELADO_COM_ESTORNO'
       WHEN 'CANCELADO' THEN CASE
-        WHEN NOT EXISTS (SELECT 1 FROM pagamento g WHERE g.pedido_id = p.id AND g.capturado)
+        WHEN NOT EXISTS (
+          SELECT 1 FROM pagamento g
+           WHERE g.order_id = p.id AND g.status = 'APROVADO')
           THEN 'CANCELADO_SEM_COBRANCA'
-        WHEN EXISTS (SELECT 1 FROM pagamento g WHERE g.pedido_id = p.id AND g.estorno_confirmado)
+        WHEN EXISTS (
+          SELECT 1 FROM estorno e
+            JOIN pagamento g ON g.id = e.pagamento_id
+           WHERE g.order_id = p.id AND e.status = 'CONCLUIDO')
           THEN 'CANCELADO_COM_ESTORNO'
         ELSE 'ESTORNO_EM_REVISAO' END
     END
     WHERE p.id IN (
-      SELECT id FROM pedido WHERE estado_saga IS NULL ORDER BY id LIMIT batch_size
+      SELECT id FROM pedidos WHERE estado_saga IS NULL ORDER BY id LIMIT batch_size
     );
     GET DIAGNOSTICS n = ROW_COUNT;
     COMMIT;
@@ -151,7 +148,7 @@ CALL pedido_backfill_estado_saga(5000);
 
 O laboratório não roda essa procedure. O `V4` em `db/migration` é um `UPDATE` único, aceito pelo H2 em modo PostgreSQL, e copia o valor antigo quando ele não é `CANCELADO`. O teste espera `CONFIRMADO` na coluna nova. Esse `V4` prova a separação do `CANCELADO` e a repetição sem efeito. Não prova o mapa canônico nem o lote com `COMMIT`.
 
-Antes de seguir: `SELECT count(*) FROM pedido WHERE estado_saga IS NULL` tem de dar 0, e uma consulta compara as duas colunas pelo mapeamento. Só então `ADD CONSTRAINT estado_saga_nn CHECK (estado_saga IS NOT NULL) NOT VALID` e `VALIDATE CONSTRAINT`, que confere sem bloquear as escritas.
+Antes de seguir: `SELECT count(*) FROM pedidos WHERE estado_saga IS NULL` tem de dar 0, e uma consulta compara as duas colunas pelo mapeamento. Só então `ADD CONSTRAINT estado_saga_nn CHECK (estado_saga IS NOT NULL) NOT VALID` e `VALIDATE CONSTRAINT`, que confere sem bloquear as escritas.
 
 Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma manda SQL para uma coluna que não existe.
 
