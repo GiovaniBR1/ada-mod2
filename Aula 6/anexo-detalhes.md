@@ -27,7 +27,7 @@ Volume, decisão: Em produção: 100% em `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ES
 
 | Estado | Dinheiro e estoque |
 | :--- | :--- |
-| `PENDENTE` | Caminho feliz, reserva feita e cobrança ainda não decidida. Na métrica entra como `ok`, fora da taxa de erro. Log em 5%. |
+| `PENDENTE` | O pedido chegou e a reserva ainda não respondeu. Nada foi cobrado. Métrica `ok`, fora da taxa de erro. Log em 5%. Não é `verificacao`. O `PENDENTE` da linha de pagamento é outro: timeout ou 500, e o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. |
 | `CONCLUIDO` | Reserva confirmada e pagamento capturado, os dois ao mesmo tempo. |
 | `CANCELADO_SEM_COBRANCA` | Nada capturado: sem saldo, PSP recusou, ou teto de pendente estourou. |
 | `CANCELADO_COM_ESTORNO` | Havia captura e o PSP confirmou o estorno. |

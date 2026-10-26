@@ -209,7 +209,8 @@ public final class CheckoutService {
         if (s == Estoque.Status.RESERVADO || s == Estoque.Status.CONFIRMADO) {
             pedido.reservado(true);
             if (s == Estoque.Status.CONFIRMADO) pedido.estoqueConfirmado(true);
-            pedido.estado(EstadoPedido.PENDENTE);
+            // Reserva respondida sai de PENDENTE. PENDENTE só vale enquanto a reserva não respondeu.
+            pedido.estado(EstadoPedido.AGUARDANDO_PAGAMENTO);
             return;
         }
         if (s == Estoque.Status.SEM_SALDO || s == Estoque.Status.NAO_RESERVADO) {

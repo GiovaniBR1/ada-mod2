@@ -22,7 +22,7 @@ SQL, degraus do canary, gates e o custo de cada escolha estão no [anexo](anexo-
   > Decisão: dois estágios no mesmo Dockerfile; só o segundo vai para o cluster.
   > Compila com `eclipse-temurin:21-jdk-jammy` e `mvn -B package`. `jarmode=tools extract --layers` separa dependências, carregador, dependências de desenvolvimento e o código nosso.
   > Executa em `gcr.io/distroless/java21-debian13:nonroot`, presa ao digest. Sem shell, sem JDK, sem fonte e sem segredo. O processo é `USER nonroot` (uid 65532), com disco só de leitura e `/tmp` num `emptyDir`.
-  > Por quê: cada pacote a mais é superfície a mais. O `pom.xml` usa Spring Boot 4.1.1 e fixa o Tomcat em 11.0.25 (18/08/2026), que corrige falhas da 11.0.24. O gate recusa CVE crítica já corrigida. Um scan que não está neste repositório não vira número.
+  > Por quê: cada pacote a mais é superfície a mais. O `pom.xml` usa Spring Boot 4.1.1 e fixa `tomcat.version` em 11.0.25. O gate recusa CVE crítica já corrigida. Um scan que não está neste repositório não vira número.
   > Exemplo: sem `sh` para entrar no container. O diagnóstico é log, métrica, trace e, se precisar, `kubectl debug`. Dockerfile, e não Paketo, porque cada estágio precisa aparecer. YAML: [anexo, imagem](anexo-detalhes.md#imagem).
 
 ### 1.2 Rastreabilidade, Identidade do Artefato e Parametrização
@@ -56,7 +56,7 @@ SQL, degraus do canary, gates e o custo de cada escolha estão no [anexo](anexo-
   > Exemplo: `V10` acrescenta `estado_saga` nula; `V11` copia em lotes de 5.000. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO`, `CONFIRMADO` vira `CONCLUIDO`, e `CANCELADO` vira sem cobrança, com estorno, ou revisão de estorno. O H2 desta aula, no backfill `V4`, ainda copia `CONFIRMADO` como está, porque o teste espera esse token. Onde o nome é o mesmo nos dois vocabulários (ex.: `PAGO`), as duas colunas recebem o mesmo valor. O token antigo só em `status_pagamento` vale para os pares que mudam de nome. A escrita viva da v1.5 grava `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`. Antes de seguir: zero nulos e zero linha fora do mapa.
   > Script aplicado não se edita. SQL e pares: [anexo, migração](anexo-detalhes.md#migracao).
 - **Garantia de Rollback Imediato:** Caso a versão `v2` apresente degradação grave de performance com 20% do tráfego na Black Friday, qual é o procedimento exato de rollback e por que o seu desenho de banco de dados garante que a versão `v1` voltará a assumir 100% da carga sem quebrar nem perder dados gravados pela `v2`?
-  > Decisão: com 20% na v2 (cerca de 1.000 TPS), duas leituras ruins devolvem 100% à v1.5. Nenhuma migração é desfeita.
+  > Decisão: com 20% na v2 (cerca de 1.000 TPS), duas leituras ruins devolvem 100% à v1.5, não à v1 do enunciado. A v1 só lia a coluna antiga e já saiu antes do canary. Nenhuma migração é desfeita.
   > Por quê: as dez réplicas da v1.5 nunca saíram e já estão dimensionadas para 5.000 TPS. Elas ainda leem `status_pagamento`, então não encontram `column "status_pagamento" does not exist`. A v2 gravou as duas colunas.
   > Exemplo: o p99 da v2 sobe de 180 ms para 900 ms e o da v1.5 segue em 175 ms. `kubectl argo rollouts abort checkout` devolve o peso em segundos. A v2 termina o que está em andamento (até 30 s) e para de consumir o Kafka.
   > Pedido em `CONCLUIDO` continua legível: nome canônico na coluna nova e o token da v1.5 na antiga. `CANCELADO_COM_ESTORNO` convive com `CANCELADO`. Passos: [anexo, rollback](anexo-detalhes.md#rollback).
@@ -81,8 +81,9 @@ SQL, degraus do canary, gates e o custo de cada escolha estão no [anexo](anexo-
 - **Validação Pré-Tráfego:** Passar nos testes unitários durante o build do código não prova que a imagem final do container sobe nem que a migração de banco é retrocompatível.
 - **Plano de Testes na Pipeline:** Descreva como você testará automaticamente a imagem construída e validará a coexistência da migração de banco de dados na esteira antes de liberar o deploy para o tráfego real de clientes.
   > Decisão: antes do tráfego real, a esteira sobe as duas imagens no mesmo banco. Teste de jar, com uma versão só, foi o que passou no incidente e não pegou o `RENAME`.
-  > O smoke usa o digest, usuário não root, disco só leitura e `/tmp` gravável. Espera readiness em até 60 s, vê que `docker run --entrypoint sh` falha e que o processo não é o uid 0. `scripts/smoke-test.sh` imprime `SMOKE OK`.
-  > `MigracaoExpandContractTest` falha se algum script tiver `DROP` ou `RENAME`. Estoque esgotado termina `CANCELADO_SEM_COBRANCA` com zero cobrança. Reserva que expira termina `CANCELADO_COM_ESTORNO` com uma devolução. `PagamentoAprovado` com dinheiro capturado em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
+  > Smoke da imagem: usa o digest, usuário não root, disco só leitura e `/tmp` gravável. Espera readiness em até 60 s, vê que `docker run --entrypoint sh` falha e que o processo não é o uid 0. `scripts/smoke-test.sh` imprime `SMOKE OK`.
+  > Migração, no JUnit: `MigracaoExpandContractTest` falha se algum script tiver `DROP` ou `RENAME`. Mantém as duas colunas e confere o backfill do H2.
+  > Saga, plano desta aula e não este JUnit: estoque esgotado termina `CANCELADO_SEM_COBRANCA` com zero cobrança. Reserva que expira termina `CANCELADO_COM_ESTORNO` com uma devolução. `PagamentoAprovado` com dinheiro capturado em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
   > Exemplo do limite: o H2 não segura `AccessExclusiveLock`. Verde no H2 não prova `ALTER` abaixo de 1 s em volume de produção. Esse portão está marcado como não executado no laboratório. Itens: [anexo, testes](anexo-detalhes.md#testes).
 
 ## Referências usadas

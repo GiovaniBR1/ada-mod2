@@ -14,7 +14,7 @@ Referência única das Aulas 4, 5 e 6. O mesmo pedido, o mesmo nome para a mesma
 |---|---|---|
 | `PENDENTE` da Aula 2 | Nome antigo da espera. Não é o estado do pedido. | Ver a [regra única](#linha-de-pagamento). `PENDENTE` só no timeout ou 500 da chamada síncrona. |
 | Espera do Pix na Aula 4 | QR criado, dinheiro ainda não capturado. | Ver a [regra única](#linha-de-pagamento). A linha nasce `AGUARDANDO_CAPTURA`. |
-| `PENDENTE` da Aula 4 | Pedido recebido, reserva de estoque ainda sem resposta. | Continua `PENDENTE`. Se o prazo estoura e a consulta não fecha, vai para `ESTOQUE_EM_VERIFICACAO`. Não fica parado. |
+| `PENDENTE` da Aula 4 e da Aula 6 | Pedido chegou. A reserva ainda não respondeu. Nada foi cobrado. | Continua `PENDENTE`. Na métrica da Aula 6 o rótulo é `ok` (caminho feliz, log de 5%). Não é `verificacao`. Se o prazo estoura e a consulta não fecha, vai para `ESTOQUE_EM_VERIFICACAO`. |
 | `CANCELADO` da Aula 4 | Um rótulo para três situações. | Dividido: `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`, ou nem chega a cancelar (`ESTORNANDO` / `ESTORNO_EM_REVISAO` / `ESTORNO_FALHOU`). |
 | `AGUARDANDO_PIX`, `CONFIRMADO`, `RESERVANDO_ESTOQUE` (textos das Aulas 5 e 6) | Sinônimos da mesma situação, com outro nome. | `AGUARDANDO_PAGAMENTO`, `CONCLUIDO`, `PENDENTE`. |
 | Cinco tentativas de estorno (Aula 4) | O laço automático. Depois da quinta sem confirmação, revisão e chamado. | **Continua valendo.** É o que abre `ESTORNO_EM_REVISAO`. Não foi substituído. |

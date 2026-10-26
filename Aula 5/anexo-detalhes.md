@@ -69,7 +69,7 @@ A 5.000 TPS sempre há transações abertas. Um `ALTER` esperando trava quem che
 <a id="mapa-de-pares"></a>
 ## Mapa de pares
 
-O script abaixo já está no modelo da Aula 4: tabela `pedidos`, `pagamento.order_id`, `pagamento.status` e a tabela `estorno`. `status_pagamento` é a coluna antiga da v1.5, lida só neste backfill. `estado_saga` é a coluna nova; na Aula 4 o estado vivo é `pedidos.status`. O `ELSE` de `CANCELADO` capturado e sem confirmação de estorno vai para `ESTORNO_EM_REVISAO`, balde único do legado. O `V4` do H2 não é este script: ainda copia `CONFIRMADO`, porque o teste espera esse token.
+O backfill roda no banco de cada serviço, só nas tabelas daquele serviço. O Checkout não lê `pagamento` nem `estorno`. O Pagamento classifica o `CANCELADO` e devolve a lista `(order_id, destino)`. O Checkout grava essa lista na tabela local `legado_cancelado` e só então atualiza `pedidos`. `status_pagamento` é a coluna antiga da v1.5. `estado_saga` é a coluna nova. Na Aula 4 o estado vivo se chama `pedidos.status`. `CANCELADO` capturado e sem confirmação vai para `ESTORNO_EM_REVISAO`, balde único do legado. O `V4` do H2 não é este script: ainda copia `CONFIRMADO`, porque o teste espera esse token.
 
 Zero linha fora do mapa: um token que não está na tabela abaixo faz o script lançar exceção. Os doze estados do apêndice entram no mapa como o mesmo token, então uma linha que já os carrega não dispara essa exceção.
 
@@ -85,12 +85,10 @@ Zero linha fora do mapa: um token que não está na tabela abaixo faz o script l
 | `ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO` | o mesmo token (já é um dos doze) |
 
 ```sql
--- V11__backfill_estado_saga.sql
--- Modelo da Aula 4: pedidos, pagamento.order_id, pagamento.status, tabela estorno.
--- status_pagamento: coluna antiga da v1.5. estado_saga: coluna nova (pedidos.status na Aula 4).
--- ELSE de CANCELADO capturado e sem confirmação: ESTORNO_EM_REVISAO, balde único do legado.
+-- Banco do Checkout. Só a tabela pedidos.
+-- CANCELADO fica de fora: o destino chega em legado_cancelado.
 -- executeInTransaction=false no .conf, senão o COMMIT interno é recusado.
-CREATE OR REPLACE PROCEDURE pedido_backfill_estado_saga(batch_size int DEFAULT 5000)
+CREATE OR REPLACE PROCEDURE pedidos_backfill_nomes(batch_size int DEFAULT 5000)
 LANGUAGE plpgsql AS $$
 DECLARE n int;
 BEGIN
@@ -122,28 +120,46 @@ BEGIN
       WHEN 'ESTORNO_EM_REVISAO' THEN 'ESTORNO_EM_REVISAO'
       WHEN 'ESTORNO_FALHOU' THEN 'ESTORNO_FALHOU'
       WHEN 'CANCELADO_COM_ESTORNO' THEN 'CANCELADO_COM_ESTORNO'
-      WHEN 'CANCELADO' THEN CASE
-        WHEN NOT EXISTS (
-          SELECT 1 FROM pagamento g
-           WHERE g.order_id = p.id AND g.status = 'APROVADO')
-          THEN 'CANCELADO_SEM_COBRANCA'
-        WHEN EXISTS (
-          SELECT 1 FROM estorno e
-            JOIN pagamento g ON g.id = e.pagamento_id
-           WHERE g.order_id = p.id AND e.status = 'CONCLUIDO')
-          THEN 'CANCELADO_COM_ESTORNO'
-        ELSE 'ESTORNO_EM_REVISAO' END
+      WHEN 'CANCELADO' THEN estado_saga
     END
     WHERE p.id IN (
-      SELECT id FROM pedidos WHERE estado_saga IS NULL ORDER BY id LIMIT batch_size
+      SELECT id FROM pedidos
+       WHERE estado_saga IS NULL AND status_pagamento <> 'CANCELADO'
+       ORDER BY id LIMIT batch_size
     );
     GET DIAGNOSTICS n = ROW_COUNT;
     COMMIT;
     EXIT WHEN n = 0;
     PERFORM pg_sleep(0.05);
   END LOOP;
+  UPDATE pedidos p
+     SET estado_saga = c.destino
+    FROM legado_cancelado c
+   WHERE p.id = c.order_id
+     AND p.status_pagamento = 'CANCELADO'
+     AND p.estado_saga IS NULL
+     AND c.destino IN ('CANCELADO_SEM_COBRANCA','CANCELADO_COM_ESTORNO','ESTORNO_EM_REVISAO');
 END $$;
-CALL pedido_backfill_estado_saga(5000);
+```
+
+```sql
+-- Banco do Pagamento. Só pagamento e estorno. Não lê pedidos.
+-- O resultado é copiado para o Checkout, na tabela legado_cancelado.
+CREATE OR REPLACE PROCEDURE pagamento_classifica_cancelado()
+LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO classifica_cancelado (order_id, destino)
+  SELECT g.order_id,
+    CASE
+      WHEN g.status IS DISTINCT FROM 'APROVADO' THEN 'CANCELADO_SEM_COBRANCA'
+      WHEN EXISTS (
+        SELECT 1 FROM estorno e
+         WHERE e.pagamento_id = g.id AND e.status = 'CONCLUIDO')
+        THEN 'CANCELADO_COM_ESTORNO'
+      ELSE 'ESTORNO_EM_REVISAO'
+    END
+  FROM pagamento g;
+END $$;
 ```
 
 O laboratório não roda essa procedure. O `V4` em `db/migration` é um `UPDATE` único, aceito pelo H2 em modo PostgreSQL, e copia o valor antigo quando ele não é `CANCELADO`. O teste espera `CONFIRMADO` na coluna nova. Esse `V4` prova a separação do `CANCELADO` e a repetição sem efeito. Não prova o mapa canônico nem o lote com `COMMIT`.
@@ -182,7 +198,7 @@ Pedido que a v2 levou a `CONCLUIDO`: a coluna antiga nunca saiu; a v2 gravou `CO
 | Rollout | análise do canary |
 | Todo dia | scan do SBOM das imagens em produção contra CVEs novas |
 
-Tomcat: o Apache publicou a 11.0.25 em 18/08/2026 e essa release corrige falhas que afetam a linha até 11.0.24. O `pom.xml` fixa `<tomcat.version>11.0.25</tomcat.version>` em cima do Spring Boot 4.1.1, que o Maven resolve. Contagens de CVE de um scan que não está no repositório (por exemplo um total fechado de críticas ou de altas) ficam de fora: o que a esteira garante é falhar em crítica com correção publicada.
+Tomcat: o `pom.xml` fixa `<tomcat.version>11.0.25</tomcat.version>` em cima do Spring Boot 4.1.1. Contagens de CVE de um scan que não está no repositório ficam de fora. O que a esteira garante é falhar em crítica com correção publicada.
 
 <a id="governanca"></a>
 ## Governança
