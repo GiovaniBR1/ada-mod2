@@ -90,7 +90,7 @@
   > **Caminho de falha e compensação (o incidente).**
   > 1. No passo 5, o Estoque encontra a reserva já `LIBERADA` (expirou e a unidade foi vendida) e responde `ReservaRejeitada`.
   > 2. Orquestrador muda para `ESTORNANDO` e emite `EstornarPagamento`, na mesma transação.
-  > 3. O Pagamento pede a **devolução do Pix** ao PSP, grava `ESTORNADO` e responde `PagamentoEstornado`.
+  > 3. O Pagamento pede a **devolução do Pix** ao PSP. A linha de pagamento permanece `APROVADO` e a tabela `estorno` vai a `CONCLUIDO`. Responde `PagamentoEstornado`. Em `SagaCompra.java` o laboratório grava `ESTORNADO` no mapa em memória do pagamento, porque a simulação não tem a tabela `estorno`.
   > 4. Orquestrador muda para `CANCELADO_COM_ESTORNO`. O cliente recebe a notificação "o produto esgotou, devolvemos seu Pix".
   >
   > **Pix que chega tarde.** Se a confirmação do PSP chega com o pedido já em `CANCELADO_SEM_COBRANCA` (venceu sem pagamento), o evento não é descartado como "atrasado": o dinheiro entrou. O orquestrador muda para `ESTORNANDO` e emite `EstornarPagamento` na hora, com a mesma chave. O fim, quando o PSP confirma, é `CANCELADO_COM_ESTORNO`.
