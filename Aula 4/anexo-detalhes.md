@@ -12,7 +12,8 @@ Caminho feliz.
 3. Orquestrador muda para `AGUARDANDO_PAGAMENTO` e emite `CobrarPagamento`. O Pagamento gera o QR Code do Pix e grava a linha `AGUARDANDO_CAPTURA`, com o `txid` do QR.
 4. O PSP avisa que o Pix caiu; o Pagamento grava `APROVADO` e `PagamentoAprovado`.
 5. Orquestrador muda para `PAGO` e emite `ConfirmarReserva`. Estoque muda a reserva para `CONFIRMADA` e responde `ReservaConfirmada`.
-6. Pedido `CONCLUIDO`.
+6. Orquestrador grava `CONCLUIDO` e emite `PedidoConcluido`.
+São 7 mensagens (`ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada`, `PedidoConcluido`). A 5.000 pedidos/s, 35.000 mensagens/s.
 
 Caminho de falha e compensação (o incidente).
 
@@ -21,7 +22,7 @@ Caminho de falha e compensação (o incidente).
 3. O Pagamento pede a devolução do Pix ao PSP. A linha de pagamento permanece `APROVADO` e a tabela `estorno` vai a `CONCLUIDO`. Responde `PagamentoEstornado`.
 4. Orquestrador muda para `CANCELADO_COM_ESTORNO`. O cliente recebe a notificação "o produto esgotou, devolvemos seu Pix".
 
-Pix que chega tarde. Se a confirmação do PSP chega com o pedido já em `CANCELADO_SEM_COBRANCA` (venceu sem pagamento), o evento não é descartado: o dinheiro entrou. O orquestrador muda para `ESTORNANDO` e emite `EstornarPagamento` na hora, com a mesma chave. O fim, quando o PSP confirma, é `CANCELADO_COM_ESTORNO`.
+Pix que chega tarde: [regra única](apendice-maquina-de-estados.md#linha-de-pagamento).
 
 Quem varre o que parou. Cada passo feliz é disparado por um evento. O relógio de `prazo_passo` varre todo estado que não é fim com o prazo vencido, inclusive `PAGO` (ex.: 30 s sem resposta do Estoque). Não é o job de 5 min. O estorno espera em `proxima_tentativa_em` (1 s, 5 s, 30 s, 2 min, 10 min), com poll curto para a espera de 1 s. O job de 5 min só vê a revisão de 24 h e a consulta diária. O varredor de `prazo_passo` não grava mensagem nova: reenvia o mesmo comando, com o mesmo `message_id` (chave estável `pedido_id` + tipo do passo, não um uuid novo) e a mesma chave de negócio. Um id novo passaria na PK de `mensagens_processadas` e executaria o efeito outra vez. Em `PAGO`, ele consulta a reserva: confirmada vira `CONCLUIDO`; rejeitada vai para `ESTORNANDO`; desconhecida vai para `CONFIRMACAO_EM_VERIFICACAO` e não estorna enquanto o estoque for desconhecido.
 
@@ -32,7 +33,7 @@ Cada tabela mora no banco do seu serviço. IDs `uuid` v7 e status `text` com `CH
 
 | Serviço | Tabela | Campos principais | Constraints e regras |
 |---|---|---|---|
-| Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK` com os doze estados do [apêndice](apendice-maquina-de-estados.md) (`PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`); `estorno_pendente` é verdadeiro somente em `ESTORNANDO`, `ESTORNO_EM_REVISAO` e `ESTORNO_FALHOU`, e falso em todos os outros estados; índice parcial em `prazo_passo` só para estados não finais (o relógio de `prazo_passo`, não o job de 5 min). |
+| Checkout | `pedidos` | `id`, `customer_id`, `status`, `total numeric(12,2)`, `prazo_passo timestamptz`, `estorno_pendente boolean`, `version bigint` | `CHECK` com os doze estados do [apêndice](apendice-maquina-de-estados.md); `CHECK (estorno_pendente = (status IN ('ESTORNANDO','ESTORNO_EM_REVISAO','ESTORNO_FALHOU')))`; índice parcial em `prazo_passo` só para estados não finais (o relógio de `prazo_passo`, não o job de 5 min). |
 | Todos | `outbox` | `id`, `pedido_id`, `tipo`, `payload jsonb`, `criado_em` | Particionada por dia; gravada na mesma transação do dado. |
 | Todos | `mensagens_processadas` | `message_id`, `processada_em` | PK `message_id`: a trava contra mensagem repetida. |
 | Estoque | `reserva` | (Aula 3) `order_id`, `sku`, `status`, `expira_em` | `UNIQUE (order_id, sku)`; muda de `ATIVA` uma vez só. |

@@ -28,8 +28,13 @@ public class SagaCompra {
         Banco(String dono) { this.dono = dono; }
         /** "Transação local": a mudança de estado e o evento entram juntos. */
         void transacao(Runnable mudanca, String tipoEvento, String pedidoId) {
+            transacao(mudanca, tipoEvento, pedidoId, pedidoId + ":" + tipoEvento);
+        }
+
+        /** messageId estável: a retentativa reenvia o mesmo id. EstornoFalhou numera a tentativa. */
+        void transacao(Runnable mudanca, String tipoEvento, String pedidoId, String messageId) {
             mudanca.run();
-            outbox.add(new Msg(UUID.randomUUID().toString(), tipoEvento, pedidoId, dono));
+            outbox.add(new Msg(messageId, tipoEvento, pedidoId, dono));
         }
     }
 
@@ -57,6 +62,7 @@ public class SagaCompra {
     static boolean reservaExpiraAntesDeConfirmar = false;
     static final int MAX_TENTATIVAS_ESTORNO = 5;
     static final Map<String, Integer> tentativasEstorno = new HashMap<>();
+    static final Map<String, Integer> falhasEmitidas = new HashMap<>();
 
     static void mudaPedido(String id, String novo) {
         log.add("  pedido " + id + ": " + pedidos.get(id) + " -> " + novo);
@@ -75,7 +81,9 @@ public class SagaCompra {
             case "EstornoFalhou" -> {
                 int t = tentativasEstorno.merge(p, 1, Integer::sum);
                 if (t < MAX_TENTATIVAS_ESTORNO) {
-                    log.add("  estorno falhou (tentativa " + t + "), tenta de novo com espera crescente");
+                    log.add("  estorno falhou (tentativa " + t + "), reenvia o mesmo message_id");
+                    Set<String> vistasPagamento = processadasPor.get("pagamento");
+                    if (vistasPagamento != null) vistasPagamento.remove(p + ":EstornarPagamento");
                     bdCheckout.transacao(() -> {}, "EstornarPagamento", p);
                 } else {
                     bdCheckout.transacao(() -> mudaPedido(p, "ESTORNO_EM_REVISAO"), "AlertaEstorno", p);
@@ -89,7 +97,7 @@ public class SagaCompra {
     static void servicoEstoque(Msg m) {
         String p = m.pedidoId();
         switch (m.tipo()) {
-            case "PedidoCriado" -> {
+            case "ReservarEstoque" -> {
                 if (estoque.get("TV") > 0) bdEstoque.transacao(() -> { estoque.merge("TV", -1, Integer::sum); reservas.put(p, "ATIVA"); }, "EstoqueReservado", p);
                 else bdEstoque.transacao(() -> {}, "EstoqueIndisponivel", p);
             }
@@ -115,7 +123,8 @@ public class SagaCompra {
                     bdPagamento.transacao(() -> {}, "PagamentoEstornado", p);
                 } else if (falhasDoEstornoRestantes > 0) {
                     falhasDoEstornoRestantes--;
-                    bdPagamento.transacao(() -> {}, "EstornoFalhou", p);
+                    int n = falhasEmitidas.merge(p, 1, Integer::sum);
+                    bdPagamento.transacao(() -> {}, "EstornoFalhou", p, p + ":EstornoFalhou:" + n);
                 } else {
                     // chave de idempotência no PSP = id do pagamento: ele devolve uma vez só
                     estornosNoPsp.merge(p, 1, Integer::sum);
@@ -128,7 +137,7 @@ public class SagaCompra {
 
     /** Projeção do CQRS: atualiza "Meus Pedidos" a partir dos eventos, sem tocar nos bancos de escrita. */
     static void projecao(Msg m) {
-        Map<String, String> visivel = Map.of("PedidoCriado", "Processando", "PagamentoAprovado", "Pago, confirmando estoque",
+        Map<String, String> visivel = Map.of("ReservarEstoque", "Processando", "PagamentoAprovado", "Pago, confirmando estoque",
                 "EstornarPagamento", "Produto esgotou, devolvendo seu Pix", "PedidoConcluido", "Confirmado",
                 "PedidoCanceladoSemCobranca", "Cancelado, nada foi cobrado",
                 "PedidoCanceladoComEstorno", "Cancelado, Pix devolvido", "AlertaEstorno", "Devolução em análise");
@@ -161,7 +170,7 @@ public class SagaCompra {
 
     static void reset(int estoqueTv, int falhasEstorno, boolean expira) {
         broker.clear(); log.clear(); pedidos.clear(); reservas.clear(); pagamentos.clear(); estornosNoPsp.clear();
-        meusPedidos.clear(); processadasPor.clear(); tentativasEstorno.clear(); duplicadasIgnoradas = 0;
+        meusPedidos.clear(); processadasPor.clear(); tentativasEstorno.clear(); falhasEmitidas.clear(); duplicadasIgnoradas = 0;
         for (Banco b : List.of(bdCheckout, bdEstoque, bdPagamento)) b.outbox.clear();
         estoque.put("TV", estoqueTv); falhasDoEstornoRestantes = falhasEstorno; reservaExpiraAntesDeConfirmar = expira;
     }
@@ -177,7 +186,7 @@ public class SagaCompra {
         reset(estoqueTv, falhasEstorno, expira);
         String p = "pedido-1";
         System.out.println("\n== " + titulo);
-        bdCheckout.transacao(() -> pedidos.put(p, "PENDENTE"), "PedidoCriado", p);
+        bdCheckout.transacao(() -> pedidos.put(p, "PENDENTE"), "ReservarEstoque", p);
         rodar(relayCai);
         log.forEach(System.out::println);
         System.out.println("  Meus Pedidos mostra: " + meusPedidos.get(p));

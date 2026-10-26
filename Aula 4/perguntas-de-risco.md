@@ -10,7 +10,7 @@ Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
 
 ## 1. E se a confirmação do Pix chegar depois de o pedido ter sido cancelado por falta de pagamento?
 
-**Resposta.** Não é mensagem velha. O dinheiro entrou. O pedido sai de `CANCELADO_SEM_COBRANCA`, vai para `ESTORNANDO` e termina em `CANCELADO_COM_ESTORNO`.
+**Resposta.** Não é mensagem velha. A exceção do Pix atrasado está na [regra única](apendice-maquina-de-estados.md#linha-de-pagamento).
 
 **Por quê.** O `UPDATE ... WHERE status = 'AGUARDANDO_PAGAMENTO'` volta 0 linhas, porque o prazo já mudou o pedido. Tratar todo "0 linhas" como descarte deixaria o Pix retido num estado que ninguém mais olha. `CANCELADO_SEM_COBRANCA` é fim só enquanto nenhum dinheiro chegou. A única saída é esta.
 

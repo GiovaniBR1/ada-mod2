@@ -15,7 +15,7 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
   > Com 20 compras por dia, um serviço e um Postgres na mesma transação bastam.
   > 2PC (as duas fases do commit) só cabe em poucos bancos, na mesma rede, todos preparados, e com volume baixo.
   > O PSP é HTTP. O Kafka também não entra. O lock ficaria preso até todo mundo confirmar. Se o coordenador cai, as linhas ficam travadas.
-  > Um lock de 4 ms dá cerca de 250 compras por segundo num produto. No 2PC a espera sobe e o pool acaba. A troca é a transação local curta.
+  > Um lock de 4 ms é a hipótese da Aula 3: cerca de 250 compras por segundo num produto (1000 ÷ 4). No 2PC a espera sobe e o pool acaba. A troca é a transação local curta.
 
 ### 1.2 O Modelo de Coordenação da Saga
 
@@ -35,10 +35,10 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
   > Reservamos antes de cobrar. Reserva e QR vencem juntos, em 15 min. Sem unidade, para sem cobrar.
   > Os doze estados: `PENDENTE`, `ESTOQUE_EM_VERIFICACAO`, `AGUARDANDO_PAGAMENTO`, `PAGAMENTO_EM_VERIFICACAO`, `PAGO`, `CONFIRMACAO_EM_VERIFICACAO`, `CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_COM_ESTORNO`.
   > Sem estoque termina `CANCELADO_SEM_COBRANCA`. Pix devolvido termina `CANCELADO_COM_ESTORNO`.
-  > A troca exige o estado anterior. Zero linhas é mensagem velha. Exceção: Pix em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`, e `pagamento.status` sai de `EXPIRADO` para `APROVADO`.
+  > A troca exige o estado anterior. Zero linhas é mensagem velha. A exceção do Pix atrasado está no [apêndice](apendice-maquina-de-estados.md#linha-de-pagamento).
   > `PAGO` espera o passo seguinte, por exemplo 30 s. Sem prazo, um pedido cobrado fica cobrado para sempre. [Apêndice](apendice-maquina-de-estados.md).
 - **Detalhamento dos Fluxos:**
-  > O feliz vai de `PENDENTE` a `CONCLUIDO`: reserva, cobra, confirma. O QR nasce `AGUARDANDO_CAPTURA`. O evento é só `PagamentoAprovado`. A reserva fica `CONFIRMADA`.
+  > O feliz vai de `PENDENTE` a `CONCLUIDO`: reserva, cobra, confirma. O QR nasce `AGUARDANDO_CAPTURA`. O nome do evento do Pix é só `PagamentoAprovado`, sem um segundo token. A reserva fica `CONFIRMADA`.
   > No incidente, `ReservaRejeitada` leva a `ESTORNANDO`. A linha de pagamento continua `APROVADO`. A tabela `estorno` vai a `CONCLUIDO`.
   > `SagaCompra.java` grava `ESTORNADO` num mapa. A simulação não tem a tabela `estorno`.
   > O relógio de `prazo_passo` reenvia o mesmo `message_id` (`pedido_id` mais o tipo do passo). Confirmada vira `CONCLUIDO`. Rejeitada vai para `ESTORNANDO`. Desconhecida vai para `CONFIRMACAO_EM_VERIFICACAO`, sem estornar no escuro. [Anexo, fluxos](anexo-detalhes.md#fluxos).
@@ -47,16 +47,16 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
 
 - **E se a compensação falhar ou oscilar?**
   > Um estorno por pagamento, do valor total. A chave no PSP é o id do pagamento. `UNIQUE (pagamento_id)` impede o segundo.
-  > Timeout não diz se o PSP devolveu. Antes de repetir, consulta o estorno pela mesma chave.
+  > A chamada HTTP do estorno espera no máximo 3 s. Timeout não diz se o PSP devolveu. Antes de repetir, consulta o estorno pela mesma chave. Esse 3 s não é a espera de 5 s em `proxima_tentativa_em`.
   > As esperas ficam em `proxima_tentativa_em`: 1 s, 5 s, 30 s, 2 min e 10 min. Um poll curto alcança a de 1 s.
   > Na quinta falha, vai para `ESTORNO_EM_REVISAO`, com mensagem na DLQ (a fila do que não fechou) e um chamado.
   > 24 h sem confirmação: `ESTORNO_FALHOU`. O job de 5 min só olha essa revisão e a consulta diária. Se o PSP confirmar, fecha `CANCELADO_COM_ESTORNO` sem outra devolução.
   > `PAGO` usa o `prazo_passo` (ex.: 30 s). Não entra nesse job.
 - **Atomicidade entre Estado e Mensageria (Dual Write):**
-  > A outbox nasce na mesma transação. O Debezium publica no Kafka. O serviço não fala com o Kafka.
+  > A outbox nasce na mesma transação. O Debezium (o programa que lê a caixa de saída e publica) publica no Kafka (a fila de mensagens). O serviço não fala com o Kafka.
   > Gravar e publicar depois perde o comando se a rede cai. Publicar antes cria evento de algo que não foi gravado.
   > A entrega é pelo menos uma vez. O consumidor grava o `message_id` junto com o efeito. O job reapresenta o mesmo id.
-  > O feliz tem 7 mensagens. A 5.000 pedidos/s, cerca de 35 mil mensagens/s. A outbox é particionada por dia. Apaga a partição, não a linha.
+  > O feliz tem 7 mensagens: `ReservarEstoque`, `EstoqueReservado`, `CobrarPagamento`, `PagamentoAprovado`, `ConfirmarReserva`, `ReservaConfirmada` e `PedidoConcluido`. A 5.000 pedidos/s, 5.000 × 7 = 35.000 mensagens/s. A outbox é particionada por dia. Apaga a partição, não a linha.
 
 ### 2.3 Modelo de Dados (o que a Saga acrescenta)
 
@@ -71,13 +71,13 @@ Fluxos: [anexo](anexo-detalhes.md). Nomes: [apêndice](apendice-maquina-de-estad
 - **Desenho da Solução:**
   > "Meus Pedidos" lê o Redis, pela chave `customer_id`. CQRS: quem grava e quem responde a tela não são o mesmo modelo.
   > Dois milhões de clientes a cada 5 s são 400 mil leituras/s. Isso é 80 vezes as escritas.
-  > A cópia só aplica `version` maior. A meta de atraso é 1 s no p99.
+  > Um consumidor do Kafka grava `pedidos:{customer_id}` no Redis quando `version` é maior. A meta de atraso é 1 s no p99.
   > Se a cópia estiver atrás, o app mostra "processando seu pagamento". Se o Redis cair, a tela mostra "atualizando" e a compra continua.
 
 ### 3.2 Estratégia de Testes da Transação Distribuída
 
 - **Validação de Resiliência e Plano de Testes:**
   > O teste sobe Kafka, Debezium e um Postgres por serviço, com WireMock no PSP (servidor falso). O caso é "Pix aprovado, estoque rejeita". Espera até 10 s, sem `sleep` fixo, em todo PR da saga.
-  > `ReservaRejeitada` termina `CANCELADO_COM_ESTORNO`, com 1 devolução. A tela mostra "Cancelado, Pix devolvido". A DLQ fica vazia.
-  > PSP sempre 503 fica em `ESTORNO_EM_REVISAO` e, após 24 h, em `ESTORNO_FALHOU`. De `CONCLUIDO` e de `CANCELADO_COM_ESTORNO` não se sai. De `CANCELADO_SEM_COBRANCA` só se sai se o Pix chegar depois.
+  > `ReservaRejeitada` termina `CANCELADO_COM_ESTORNO`, com 1 devolução ao PSP. A tela mostra "Cancelado, Pix devolvido". A DLQ fica vazia.
+  > PSP sempre 503 fica em `ESTORNO_EM_REVISAO` e, após 24 h, em `ESTORNO_FALHOU`. De `CONCLUIDO` e de `CANCELADO_COM_ESTORNO` não se sai. A exceção do Pix atrasado está no [apêndice](apendice-maquina-de-estados.md#linha-de-pagamento).
   > `SagaCompra.java` imprime esses dois cancelamentos. Não substitui Kafka nem Postgres. [Anexo, testes](anexo-detalhes.md#testes).

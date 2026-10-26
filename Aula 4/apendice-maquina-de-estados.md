@@ -80,7 +80,7 @@ stateDiagram-v2
   CANCELADO_COM_ESTORNO --> [*]
 ```
 
-Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Zero linhas significam mensagem velha ou repetida, com uma exceção: `PagamentoAprovado` com o pedido já em `CANCELADO_SEM_COBRANCA` não é descarte. O dinheiro entrou. O pedido vai para `ESTORNANDO`. Na linha de pagamento, esse mesmo webhook é a única saída de estado final: `EXPIRADO` vai para `APROVADO` ([regra única](#linha-de-pagamento)).
+Toda transição é condicional: `UPDATE pedidos SET status = :novo, version = version + 1 WHERE id = :id AND status = :esperado`. Zero linhas significam mensagem velha ou repetida. A exceção do Pix atrasado está na [regra única](#linha-de-pagamento).
 
 ## Política de prazo, tentativa e estorno
 
