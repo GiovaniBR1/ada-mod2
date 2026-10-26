@@ -1,6 +1,6 @@
 # Anexo da Aula 6 — contas, PromQL, tabelas
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam as contas, as consultas e as tabelas. Os estados são os do [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md).
+Aqui ficam as contas, as consultas e as tabelas. Os estados são os do [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md).
 
 ## Logs
 
@@ -120,7 +120,7 @@ histogram_quantile(0.99, sum by (le, versao) (rate(checkout_operacao_duracao_sec
 | p99 de `finalizar` acima de 800 ms por 2 min, com pelo menos 100 chamadas na janela | 3,0 s e também 6,0 s | |
 | `checkout_http_em_andamento` acima do dobro da base de 10 min, por 1 min | 1.388 contra base 588 | |
 | `checkout_pedidos_em_aberto` ou verificação com mais de 5 min | saga parada depois do HTTP 202 | 5 min aqui é limiar de alerta, não o poll de `proxima_tentativa_em` nem o `prazo_passo`. O teste chama `reconciliar` direto |
-| conversão da coorte com entrada há mais de 15 min; terminais no denominador; limiar = taxa da hora anterior | a queda que o chamado descreveu | a aula não publica a conversão normal; Pix não pago e estoque esgotado são desfecho normal |
+| conversão: denominador = coorte com entrada há mais de 15 min (todos); numerador = desfecho (`CONCLUIDO`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`); limiar = taxa da hora anterior | preso fora de terminal baixa a taxa, que é a queda do chamado | Pix não pago e estoque esgotado são desfecho e ficam no numerador |
 | média acima de 300 ms | | 120 ms e 238 ms |
 | CPU acima de 80% como único sinal | | a CPU do incidente estava abaixo de 40% |
 
@@ -141,7 +141,7 @@ O teto em reais não é chutado. A aula não diz a fração de Pix nem o ticket.
 
 | Label proibido | Efeito no servidor de métricas |
 | :--- | :--- |
-| `order_id` | 5.000/s × 60 s = 300.000 ids num minuto × 11 séries = 3,3 milhões de séries por minuto. O 11 são 9 baldes (0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf) mais `_sum` e `_count`. O teste recusa com exceção. |
+| `order_id` | 5.000/s × 60 s = 300.000 ids num minuto. 300.000 × 11 = 3,3 milhões de séries por minuto. O 11 são 9 baldes (0,05, 0,1, 0,25, 0,5, 1, 2, 4, 8 e +Inf) mais `_sum` e `_count`. O teste recusa com exceção. |
 | `trace_id` | Um valor por requisição. A mesma explosão. O trace já guarda esse id. |
 | `user_id` | Uma série por cliente. No pico o conjunto cresce o tempo todo, e o id da pessoa iria para o banco de métricas. |
 | `cpf` e `email` | O mesmo crescimento, e ainda é dado pessoal dentro do TSDB (o banco de séries do Prometheus). |
@@ -208,7 +208,7 @@ Postmortem, formato blameless do SRE book. Sintoma: tela carregando e conversão
 | Confirmação desconhecida | `CONFIRMACAO_EM_VERIFICACAO` | zero estornos e o estado não é `CONCLUIDO`, embora o dinheiro já tenha sido capturado |
 | Estorno mudo; o job depois vê "estornado" | `CANCELADO_COM_ESTORNO` | nenhuma chamada nova de estorno |
 | Job consulta e o estorno segue desconhecido | `ESTORNO_EM_REVISAO` | nenhuma chamada nova de estorno |
-| Cinco tentativas (1 s, 5 s, 30 s, 2 min, 10 min); o pedido fica `ESTORNANDO` e a quinta sem confirmação abre `ESTORNO_EM_REVISAO` | agenda do apêndice da Aula 4; `dentroDoPrazoJobTentaOEstornoUmaVez` não percorre essas cinco esperas | o teste avança o relógio 60 s, faz uma segunda chamada de estorno e, se o PSP responde "estornado", fecha em `CANCELADO_COM_ESTORNO`. Prova uma retentativa dentro da janela, não o calendário das cinco |
+| Falha 1 espera 1 s, falha 2 espera 5 s, falha 3 espera 30 s, falha 4 espera 2 min, e a falha 5 abre `ESTORNO_EM_REVISAO`. Não há quinta espera | agenda do apêndice da Aula 4; `dentroDoPrazoJobTentaOEstornoUmaVez` não percorre essas quatro esperas | o teste avança o relógio 60 s, faz uma segunda chamada de estorno e, se o PSP responde "estornado", fecha em `CANCELADO_COM_ESTORNO`. Prova uma retentativa dentro da janela, não o calendário |
 | 24 h sem confirmação | `ESTORNO_FALHOU` e um alerta; no dia seguinte a consulta ainda pode fechar | nenhuma chamada nova de estorno nesse fechamento |
 | Segundo pedido estoura o teto | `CANCELADO_SEM_COBRANCA` | zero cobranças para esse pedido, estoque liberado uma vez |
 | Webhook com assinatura errada | o estado não muda | nenhuma confirmação de estoque |
