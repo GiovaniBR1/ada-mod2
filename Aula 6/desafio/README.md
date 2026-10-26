@@ -26,7 +26,8 @@ O que o projeto prova, sem um collector de verdade:
 | Confirmação desconhecida: não estorna e não marca `CONCLUIDO` | `SagaDiagnosticoTest.confirmacaoDesconhecidaNaoEstornaNemConfirma` |
 | Estorno sem resposta: job vê "estornado" e não chama o PSP de novo | `SagaDiagnosticoTest.estornoSemRespostaFicaEmRevisaoEJobConcluiSemNovaChamada` |
 | Job não estorna enquanto o status do estorno é desconhecido | `SagaDiagnosticoTest.jobNaoEstornaEnquantoStatusDoPspEDesconhecido` |
-| Dentro de 24 h, uma retentativa; depois de 24 h, `ESTORNO_FALHOU` e a consulta do dia seguinte ainda fecha | `SagaDiagnosticoTest.dentroDoPrazoJobTentaOEstornoUmaVez` e `apos24hSemEstornoAbreAlertaENoDiaSeguinteAConsultaAindaFecha` |
+| Dentro de 24 h o job faz uma segunda chamada se o PSP ainda não estornou; não percorre as cinco esperas (1 s, 5 s, 30 s, 2 min, 10 min) | `SagaDiagnosticoTest.dentroDoPrazoJobTentaOEstornoUmaVez` |
+| Depois de 24 h, `ESTORNO_FALHOU` e a consulta do dia seguinte ainda fecha | `SagaDiagnosticoTest.apos24hSemEstornoAbreAlertaENoDiaSeguinteAConsultaAindaFecha` |
 | Teto de pendente bloqueia a segunda cobrança; a resposta não traz a soma nem CPF | `SagaDiagnosticoTest.tetoDePendenteBloqueiaNovaCobrancaERespostaNaoExpoeASoma` |
 | Webhook com HMAC: assinatura errada não muda o estado; a certa confirma uma vez | `SagaDiagnosticoTest.webhookPagoConfirmaUmaVezEAssinaturaErradaNaoMudaNada` |
 | Evento da saga usa `orderId` como chave e carrega o trace da entrada | `SagaDiagnosticoTest.eventosUsamOrderIdComoChaveECarregamOTrace` |

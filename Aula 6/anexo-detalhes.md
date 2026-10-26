@@ -204,7 +204,7 @@ Postmortem, formato blameless do SRE book. Sintoma: tela carregando e conversão
 | Confirmação desconhecida | `CONFIRMACAO_EM_VERIFICACAO` | zero estornos e o estado não é `CONCLUIDO`, embora o dinheiro já tenha sido capturado |
 | Estorno mudo; o job depois vê "estornado" | `CANCELADO_COM_ESTORNO` | nenhuma chamada nova de estorno |
 | Job consulta e o estorno segue desconhecido | `ESTORNO_EM_REVISAO` | nenhuma chamada nova de estorno |
-| Dentro de 24 h o PSP diz que ainda não estornou | uma retentativa, e `CANCELADO_COM_ESTORNO` se ela voltar "estornado" | a retentativa é uma chamada, não duas |
+| Cinco tentativas (1 s, 5 s, 30 s, 2 min, 10 min); o pedido fica `ESTORNANDO` e a quinta sem confirmação abre `ESTORNO_EM_REVISAO` | agenda do apêndice da Aula 4; `dentroDoPrazoJobTentaOEstornoUmaVez` não percorre essas cinco esperas | o teste avança o relógio 60 s, faz uma segunda chamada de estorno e, se o PSP responde "estornado", fecha em `CANCELADO_COM_ESTORNO`. Prova uma retentativa dentro da janela, não o calendário das cinco |
 | 24 h sem confirmação | `ESTORNO_FALHOU` e um alerta; no dia seguinte a consulta ainda pode fechar | nenhuma chamada nova de estorno nesse fechamento |
 | Segundo pedido estoura o teto | `CANCELADO_SEM_COBRANCA` | zero cobranças para esse pedido, estoque liberado uma vez |
 | Webhook com assinatura errada | o estado não muda | nenhuma confirmação de estoque |
