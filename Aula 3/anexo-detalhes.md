@@ -195,7 +195,7 @@ sequenceDiagram
     end
     API-->>C: 201 / 402, ou 202 se o pagamento ficou PENDENTE
   end
-  Note over DB: 503 sem chamada não cria pagamento. Reconciliação só fecha um PENDENTE já gravado. Caminho síncrono, antes do Pix com QR
+  Note over DB: 503 sem chamada não cria pagamento. Sem linha e com cobrança no parceiro, a reconciliação insere a linha (como a Aula 2). Com linha PENDENTE, só fecha. Caminho síncrono, antes do Pix com QR
 ```
 
 <a id="testes"></a>

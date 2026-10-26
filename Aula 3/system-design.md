@@ -113,7 +113,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
 1. **E se...** a resposta atrasada do parceiro e a reconciliação fecharem o mesmo `PENDENTE` ao mesmo tempo, com resultados diferentes?
    - **Resposta do Sistema:** os dois leem `version = 3`. O primeiro grava `version = 4`; o segundo toma `OptimisticLockException`, relê e não muda o que já fechou. Se o vencedor foi `EXPIRADO` e o webhook de captura chega depois, `pagamento.status` vai de `EXPIRADO` para `APROVADO` e o pedido em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
 2. **E se...** o pagamento for recusado ou expirar depois que a última unidade já foi reservada?
-   - **Resposta do Sistema:** a T2 grava `RECUSADO` ou `EXPIRADO` e, na mesma transação, libera a reserva só com `WHERE status = 'ATIVA'`. Cair antes da T2 não cria linha de pagamento; a reserva segue `ATIVA` até a reconciliação consultar o parceiro.
+   - **Resposta do Sistema:** a T2 grava `RECUSADO` ou `EXPIRADO` e, na mesma transação, libera a reserva só com `WHERE status = 'ATIVA'`. Cair antes da T2 não cria linha de pagamento; a reserva segue `ATIVA` até a reconciliação consultar o parceiro. Sem linha e com cobrança no parceiro, a reconciliação insere a linha (como a Aula 2). Com linha `PENDENTE`, só fecha.
 3. **E se...** a migration do índice novo travar as gravações durante o pico?
    - **Resposta do Sistema:** `CREATE INDEX CONCURRENTLY`, fora de transação (`executeInTransaction=false`), antes da Black Friday. Índice `INVALID` é derrubado e recriado. O diagrama do caminho síncrono está no [anexo](anexo-detalhes.md#diagrama).
 

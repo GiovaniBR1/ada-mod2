@@ -31,7 +31,7 @@ Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
 
 **Por quê.** Sem a liberação, o estoque fica em 0 com a unidade na prateleira. Com `UPDATE estoque SET disponivel = disponivel + 1` sem olhar a reserva, dois caminhos (a transação refeita, o job, o vencimento) devolvem duas vezes e o estoque passa de 1 para 2. A T2 grava a linha de pagamento e libera a reserva na mesma transação. A devolução da unidade depende de o `UPDATE` da reserva ter mudado 1 linha.
 
-**Exemplo.** Estoque da TV = 1. A primeira compra reserva e o parceiro recusa. T2 grava `RECUSADO`, reserva `LIBERADA`, estoque volta a 1. Uma segunda liberação encontra `LIBERADA`, afeta 0 linhas e não soma de novo. A compra seguinte consegue a unidade. Se a réplica cair antes da T2, a linha de pagamento ainda não existe: reserva `ATIVA`, estoque 0. A reconciliação consulta o parceiro pela mesma chave e só então grava o pagamento; com recusa, faz a mesma liberação.
+**Exemplo.** Estoque da TV = 1. A primeira compra reserva e o parceiro recusa. T2 grava `RECUSADO`, reserva `LIBERADA`, estoque volta a 1. Uma segunda liberação encontra `LIBERADA`, afeta 0 linhas e não soma de novo. A compra seguinte consegue a unidade. Se a réplica cair antes da T2, a linha de pagamento ainda não existe: reserva `ATIVA`, estoque 0. A reconciliação consulta o parceiro pela mesma chave. Sem linha e com cobrança no parceiro, insere a linha (como a Aula 2). Com linha `PENDENTE`, só fecha. Com recusa, faz a mesma liberação.
 
 **Como testamos.** PostgreSQL 17 e WireMock.
 
