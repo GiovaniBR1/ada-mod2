@@ -14,7 +14,7 @@ Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
 
 **Por quê.** O `UPDATE ... WHERE status = 'AGUARDANDO_PAGAMENTO'` volta 0 linhas, porque o prazo já mudou o pedido. Tratar todo "0 linhas" como descarte deixaria o Pix retido num estado que ninguém mais olha. `CANCELADO_SEM_COBRANCA` é fim só enquanto nenhum dinheiro chegou. A única saída é esta.
 
-**Exemplo.** Reserva até 23:55. O job libera a unidade no vencimento e outra compra a leva. Às 23:55:20 o PSP avisa que o Pix caiu. O orquestrador relê, grava `estorno_pendente = true` e publica `EstornarPagamento` com a chave igual ao id do pagamento. O booleano continua verdadeiro em `ESTORNANDO`, `ESTORNO_EM_REVISAO` e `ESTORNO_FALHOU`. Volta a falso quando o PSP confirma e o pedido chega a `CANCELADO_COM_ESTORNO`. `UNIQUE (pagamento_id)` impede um segundo estorno. O cliente vê que o pagamento atrasado foi devolvido. A unidade fica com quem comprou depois.
+**Exemplo.** Reserva até 23:55. O job libera a unidade no vencimento e outra compra a leva. Às 23:55:20 o PSP avisa que o Pix caiu. O orquestrador relê, grava `estorno_pendente = true` e publica `EstornarPagamento` com a chave igual ao id do pagamento. O booleano é verdadeiro somente em `ESTORNANDO`, `ESTORNO_EM_REVISAO` e `ESTORNO_FALHOU`, e falso em todos os outros estados. Volta a falso quando o PSP confirma e o pedido chega a `CANCELADO_COM_ESTORNO`. `UNIQUE (pagamento_id)` impede um segundo estorno. O cliente vê que o pagamento atrasado foi devolvido. A unidade fica com quem comprou depois.
 
 **Como testamos.** Kafka, um Postgres por serviço, PSP no WireMock.
 
