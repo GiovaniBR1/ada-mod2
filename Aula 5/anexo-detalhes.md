@@ -43,9 +43,9 @@ docker push registry/checkout:1.5.0-a1b2c3d
 Quatro motivos da convivência, em detalhe:
 
 1. Banco: as duas versões funcionam com o schema da seção de migração.
-2. API: a v2 só acrescenta campos opcionais. Nada some e nada muda de sentido nesta release. A flag `saga_estados_v2` liga a saga nova. O Argo Rollouts a opera no degrau: ela já está ligada em 1% e 5%, com os mesmos sinais. O rollback aos 20% descreve o estado que a flag já gravou (`CONCLUIDO` e `CANCELADO_COM_ESTORNO`).
+2. API: a v2 só acrescenta campos opcionais. Nada some e nada muda de sentido nesta release. A flag `saga_estados_v2` fica só nos pods v2. Ligada, a v2 grava os doze estados em `estado_saga` e o token antigo em `status_pagamento`. A v1.5 continua lendo `status_pagamento`. O Argo Rollouts (a ferramenta que move a porcentagem do canary) já opera em 1% e 5%, com os mesmos sinais.
 3. Mensagens: chave `orderId`. Quando o Kafka redistribui partições, pode entregar a mensagem duas vezes. O consumidor grava o `message_id` com `UNIQUE` e ignora o repetido. O reenvio do job usa esse mesmo `message_id` (apêndice), não um id novo.
-4. Webhook do PSP: as duas versões verificam o HMAC, gravam `UNIQUE(pagamento_id)` e respeitam o mesmo teto de Pix em `AGUARDANDO_PAGAMENTO`. O número do teto é o medido na Aula 6.
+4. Webhook do PSP: as duas conferem o HMAC e só mudam a linha se status ainda é `AGUARDANDO_CAPTURA` ou `EXPIRADO`. O teto de Pix em `AGUARDANDO_PAGAMENTO` é o medido na Aula 6. `UNIQUE (pagamento_id)` é a trava da tabela `estorno`, não deste webhook.
 
 <a id="migracao"></a>
 ## Migração
@@ -138,27 +138,29 @@ BEGIN
    WHERE p.id = c.order_id
      AND p.status_pagamento = 'CANCELADO'
      AND p.estado_saga IS NULL
-     AND c.destino IN ('CANCELADO_SEM_COBRANCA','CANCELADO_COM_ESTORNO','ESTORNO_EM_REVISAO');
+     AND c.destino IN ('CANCELADO_SEM_COBRANCA','CANCELADO_COM_ESTORNO','ESTORNO_EM_REVISAO','PAGAMENTO_EM_VERIFICACAO');
 END $$;
 ```
 
 ```sql
--- Banco do Pagamento. Só pagamento e estorno. Não lê pedidos.
--- O resultado é copiado para o Checkout, na tabela legado_cancelado.
+-- Banco do Pagamento. Só order_id em cancelado_legado (legado CANCELADO).
+-- PENDENTE vai para PAGAMENTO_EM_VERIFICACAO. Copia o resultado para legado_cancelado.
 CREATE OR REPLACE PROCEDURE pagamento_classifica_cancelado()
 LANGUAGE plpgsql AS $$
 BEGIN
   INSERT INTO classifica_cancelado (order_id, destino)
   SELECT g.order_id,
     CASE
-      WHEN g.status IS DISTINCT FROM 'APROVADO' THEN 'CANCELADO_SEM_COBRANCA'
-      WHEN EXISTS (
+      WHEN g.status = 'PENDENTE' THEN 'PAGAMENTO_EM_VERIFICACAO'
+      WHEN g.status = 'APROVADO' AND EXISTS (
         SELECT 1 FROM estorno e
          WHERE e.pagamento_id = g.id AND e.status = 'CONCLUIDO')
         THEN 'CANCELADO_COM_ESTORNO'
-      ELSE 'ESTORNO_EM_REVISAO'
+      WHEN g.status = 'APROVADO' THEN 'ESTORNO_EM_REVISAO'
+      ELSE 'CANCELADO_SEM_COBRANCA'
     END
-  FROM pagamento g;
+  FROM pagamento g
+  JOIN cancelado_legado c ON c.order_id = g.order_id;
 END $$;
 ```
 
@@ -198,7 +200,7 @@ Pedido que a v2 levou a `CONCLUIDO`: a coluna antiga nunca saiu; a v2 gravou `CO
 | Rollout | análise do canary |
 | Todo dia | scan do SBOM das imagens em produção contra CVEs novas |
 
-Tomcat: o `pom.xml` fixa `<tomcat.version>11.0.25</tomcat.version>` em cima do Spring Boot 4.1.1. Contagens de CVE de um scan que não está no repositório ficam de fora. O que a esteira garante é falhar em crítica com correção publicada.
+Tomcat: o `pom.xml` fixa `<tomcat.version>11.0.25</tomcat.version>` em cima do Spring Boot 4.1.1. O gate recusa CVE crítica que já tem correção publicada.
 
 <a id="governanca"></a>
 ## Governança
@@ -212,7 +214,7 @@ Break-glass: 1 hora, justificativa, alerta ao time de segurança, cada comando n
 1. Smoke da imagem real, a partir do digest, com as regras de produção. Pegaria imagem que não sobe, variável esquecida ou processo root. `scripts/smoke-test.sh` imprime `SMOKE OK`.
 2. Migração numa cópia do schema de produção, em PostgreSQL de verdade, com dados sintéticos no mesmo volume. Falha se um `ALTER` segurar a trava exclusiva por mais de 1 s ou reescrever a tabela. Este portão não foi executado no laboratório: o README registra H2 em modo PostgreSQL. O H2 não prova o limite de 1 s.
 3. Coexistência. Com o `RENAME` do incidente, a imagem antiga receberia `column "status_pagamento" does not exist` no primeiro pedido, e o PR de promoção não abriria. `MigracaoExpandContractTest` reproduz os dois repositórios e recusa `DROP` ou `RENAME` em `db/migration`.
-4. Saga com verificação negativa. Estoque esgota antes do Pix: `CANCELADO_SEM_COBRANCA`, e falha se houver cobrança, estorno ou `CONCLUIDO` sem reserva. Reserva expira durante um Pix lento: `CANCELADO_COM_ESTORNO` e exatamente uma devolução, mesmo com evento e webhook repetidos. PSP mudo: consulta o status antes de decidir, e falha se estornar ou cancelar enquanto o status é desconhecido. Estoque mudo: consulta a reserva pelo `orderId`; sem reserva, cancela sem cobrança. Mensagens fora de ordem: atrasado que mudaria o pedido para `CONCLUIDO` ou `CONFIRMADO` é rejeitado; `PagamentoAprovado` com dinheiro capturado em `CANCELADO_SEM_COBRANCA` vai para `ESTORNANDO`.
+4. Saga com verificação negativa. Estoque esgota antes do Pix: `CANCELADO_SEM_COBRANCA`, e falha se houver cobrança, estorno ou `CONCLUIDO` sem reserva. Reserva expira durante um Pix lento: `CANCELADO_COM_ESTORNO` e exatamente uma devolução, mesmo com evento e webhook repetidos. PSP mudo: consulta o status antes de decidir, e falha se estornar ou cancelar enquanto o status é desconhecido. Estoque mudo: consulta a reserva pelo `orderId`; sem reserva, cancela sem cobrança. Mensagens fora de ordem: atrasado que mudaria o pedido para `CONCLUIDO` ou `CONFIRMADO` é rejeitado. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
 5. Três relógios. O estorno usa `proxima_tentativa_em` (1 s, 5 s, 30 s, 2 min, 10 min), com um poll curto o bastante para a espera de 1 s. `PAGO` e os outros passos não finais usam `prazo_passo` (ex.: 30 s) e ficam fora do job de 5 min. Esse job de 5 min só olha a revisão de 24 h (`ESTORNO_EM_REVISAO`) e a consulta diária. Cinco tentativas abrem a revisão. 24 h sem confirmação abrem `ESTORNO_FALHOU`; a consulta diária ainda pode fechar sem uma segunda devolução. O teste: pedido em `ESTORNO_EM_REVISAO` com PSP "estornado" sai para `CANCELADO_COM_ESTORNO` sem chamada nova.
 6. Portão final: só com 1 a 5 verdes a esteira abre o PR de promoção. O canary faz a última verificação, com clientes reais e reversão automática.
 
