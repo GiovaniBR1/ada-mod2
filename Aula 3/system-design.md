@@ -49,7 +49,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
   > Decisão: `uuid` v7, dinheiro `numeric(12,2)`, status `text` com `CHECK`. Duas travas: `UNIQUE (chave)` e `UNIQUE (order_id)` no pagamento.
   > O `CHECK` do pagamento é `PENDENTE`, `AGUARDANDO_CAPTURA`, `APROVADO`, `RECUSADO`, `EXPIRADO`, o mesmo das Aulas 2 e 4. Este desenho é o caminho síncrono, antes do Pix com QR.
   > A reserva nasce `ATIVA` na T1 e só sai uma vez. Cartão recusado encerra o pedido: outro cartão é checkout novo.
-  > `order_status` (exemplo `processing`/`delivered`) é o nome da coluna do exercício do incidente. A partir da Aula 4 ela passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. Diagrama: [anexo](anexo-detalhes.md#diagrama).
+  > O `CHECK` de `order_status` nesta aula já inclui o que ela grava: `PENDENTE` (pedido criado na T1) e `PAGAMENTO_EM_VERIFICACAO` (timeout ou 500). `processing` e `delivered` são só o valor legado do exercício, na consulta do incidente (`order_status = 'processing'`). Na Aula 4 a coluna passa a `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. Diagrama: [anexo](anexo-detalhes.md#diagrama).
 
 ---
 
@@ -70,7 +70,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
 - **Justificativa:** Centenas de usuários disputando os últimos itens na Black Friday. Como você garante que o saldo nunca fique negativo sem derrubar o banco?
   > Decisão: `UPDATE` condicional no fim da T1. Não é `@Version` e não é `SELECT FOR UPDATE` como primeiro passo.
   > Por quê: no otimista, centenas leem a mesma versão e só um vence. `UPDATE estoque SET disponivel = disponivel - :qtd WHERE sku = :sku AND disponivel >= :qtd` trava a linha até o commit. Zero linhas viram `409`. O `CHECK (disponivel >= 0)` é a segunda trava. A chamada ao parceiro fica fora da transação.
-  > T1 grava chave, pedido e reserva `ATIVA`, e por último baixa o estoque. Não grava pagamento. T2 grava o pagamento quando o parceiro responde: `APROVADO` ou `RECUSADO` se o resultado é claro; `PENDENTE` só no timeout ou 500. 503 sem chamada não cria linha.
+  > T1 grava chave, pedido em `PENDENTE` e reserva `ATIVA`, e por último baixa o estoque. Não grava pagamento. T2 grava o pagamento quando o parceiro responde: `APROVADO` ou `RECUSADO` se o resultado é claro; `PENDENTE` só no timeout ou 500, e o pedido vai para `PAGAMENTO_EM_VERIFICACAO`. Os dois estados já estão no `CHECK` de `order_status`. 503 sem chamada não cria linha.
   > Exemplo, X ≈ 4 ms de lock: cerca de 250 compras/s por produto (1000 ÷ 4). Bulkhead de 8 vagas por réplica devolve `503` em 50 ms, sem abrir conexão. Com 4 réplicas a espera fica em cerca de 130 ms.
   > Conta e SQL: [anexo, estoque](anexo-detalhes.md#estoque).
 
@@ -100,7 +100,7 @@ Tabelas, SQL, planos e o diagrama estão no [anexo](anexo-detalhes.md). A linha 
 - **Dilema no Pull Request:** Para solucionar a lentidão, um desenvolvedor da equipe abriu um PR criando índices individuais para todas as colunas da tabela de pedidos que aparecem em filtros de consulta.
 - **Seu Posicionamento:** Como responsável técnico, você aprovaria esse PR? Qual é a sua avaliação crítica sobre essa estratégia e quais impactos colaterais sistêmicos devem ser ponderados antes de aprovar novos índices?
   > Decisão: não aprovo o PR de um índice por coluna.
-  > Por quê: a consulta usa `customer_id` e `order_status` juntos. O índice é o composto `(customer_id, order_status)`. `order_status` sozinho, com 90% `delivered`, vira `Seq Scan`. Cada índice a mais custa escrita e tira o HOT update.
+  > Por quê: a consulta usa `customer_id` e `order_status` juntos. O índice é o composto `(customer_id, order_status)`. `delivered` aqui é valor legado do exercício (cerca de 90% das linhas): `order_status` sozinho vira `Seq Scan`. Não é estado do CHECK do checkout. Cada índice a mais custa escrita e tira o HOT update.
   > Exemplo: no laboratório os índices de `olist_orders` já somavam 13 MB contra 12 MB da tabela. O PR precisa de `EXPLAIN` antes e depois e de `CREATE INDEX CONCURRENTLY`. Índice com `idx_scan = 0` sai.
   > Detalhe: [anexo, índices](anexo-detalhes.md#indices).
 

@@ -46,7 +46,7 @@ IDs são `uuid` v7; dinheiro é `numeric(12,2)`, nunca `float`; datas são `time
 |---|---|---|
 | `produto` | `sku text`, `nome text`, `preco numeric(12,2)`, `atributos jsonb` | PK `sku`; `CHECK (preco > 0)`. É daqui que sai o preço cobrado. |
 | `estoque` | `sku text`, `disponivel int` | PK e FK `sku` → `produto`; `CHECK (disponivel >= 0)`. Sem `@Version`: a trava é o `UPDATE` atômico. |
-| `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK` na lista de `order_status` (ex.: `processing`, `delivered`); `@Version`. `order_status` é o nome da coluna do exercício do incidente. A partir da Aula 4 ela passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. |
+| `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK (order_status IN ('PENDENTE','PAGAMENTO_EM_VERIFICACAO'))`; `@Version`. São os estados que esta aula grava: `PENDENTE` na T1 e `PAGAMENTO_EM_VERIFICACAO` no timeout ou 500. `processing` e `delivered` são só o valor legado do exercício, na consulta do incidente (`order_status = 'processing'`). Na Aula 4 a coluna passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. |
 | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','AGUARDANDO_CAPTURA','APROVADO','RECUSADO','EXPIRADO'))`, o mesmo das Aulas 2 e 4; `@Version`. |
 | `reserva` | `id uuid`, `order_id uuid`, `sku text`, `qtd int`, `status text`, `expira_em timestamptz` | FKs para `pedidos` e `estoque`; `UNIQUE (order_id, sku)`; `CHECK (qtd > 0)`; `CHECK (status IN ('ATIVA','CONFIRMADA','LIBERADA'))`; `expira_em NOT NULL`. |
 | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | PK `id`; `UNIQUE (chave)`; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
@@ -94,7 +94,7 @@ O lock de linha só é solto no commit. Esse `UPDATE` é o último comando da T1
 
 1. T1 (milissegundos): grava a `Idempotency-Key`, cria o pedido e a `reserva` (`ATIVA`, com `expira_em`) e, por último, baixa o estoque. Não grava pagamento. Se o `UPDATE` afetar 0 linhas, a T1 volta e a resposta é `409`.
 2. Chama o parceiro fora de transação (Resilience4j).
-3. T2, quando o parceiro responde: grava a linha de pagamento. Resultado claro nasce `APROVADO` ou `RECUSADO`. `PENDENTE` só se a chamada já saiu e o resultado é ambíguo (timeout ou 500); o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. 503 sem chamada não cria linha. Se `RECUSADO` ou `EXPIRADO`, na mesma transação libera a reserva só se ainda estiver `ATIVA`. Se `APROVADO`, marca `CONFIRMADA`, com a mesma guarda.
+3. T2, quando o parceiro responde: grava a linha de pagamento. Resultado claro nasce `APROVADO` ou `RECUSADO`. `PENDENTE` só se a chamada já saiu e o resultado é ambíguo (timeout ou 500); o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. Esse valor, e o `PENDENTE` da T1, já estão no `CHECK` de `order_status`. 503 sem chamada não cria linha. Se `RECUSADO` ou `EXPIRADO`, na mesma transação libera a reserva só se ainda estiver `ATIVA`. Se `APROVADO`, marca `CONFIRMADA`, com a mesma guarda.
 
 Máximo de compras/s por produto ≈ 1000 ms ÷ X, com X = tempo em ms que a T1 segura o lock. Hipótese, não medida.
 
@@ -135,7 +135,7 @@ Descartado: dividir o estoque em várias linhas ("baldes"). Só entra se o teste
 
 O laboratório (`desafio/README.md`) mediu outra consulta: `SELECT * FROM olist_orders WHERE customer_id = ?`, sem `order_status`. Antes: `Seq Scan`, 1.539 buffers, 6,5 ms, cerca de 100 mil linhas removidas. Depois de `CREATE INDEX idx_orders_customer ON olist_orders (customer_id)`: `Bitmap Heap Scan` com `Bitmap Index Scan`, 11 buffers, 0,06 ms. Não é `Index Scan` puro e não é a consulta do incidente.
 
-A consulta do incidente é `WHERE customer_id = ? AND order_status = 'processing'`. O índice é `(customer_id, order_status)`. O bloco abaixo é ilustração de formato, não medição. PostgreSQL 17. Os números fecham entre si: 5 linhas devolvidas + 199.995 removidas pelo filtro = 200.000. Rode o EXPLAIN no seu banco.
+A consulta do incidente, diagnóstico, é `WHERE customer_id = ? AND order_status = 'processing'`. `processing` é valor legado do exercício, não estado do CHECK do checkout. O índice é `(customer_id, order_status)`. O bloco abaixo é ilustração de formato, não medição. PostgreSQL 17. Os números fecham entre si: 5 linhas devolvidas + 199.995 removidas pelo filtro = 200.000. Rode o EXPLAIN no seu banco.
 
 Antes, ilustração (`Seq Scan`, `loops=1`):
 
@@ -163,8 +163,8 @@ Execution Time: 0.036 ms
 
 Não aprovar um índice por coluna.
 
-- A consulta é `WHERE customer_id = ? AND order_status = 'processing'`. Dois índices separados viram filtro ou `BitmapAnd`. O composto é `(customer_id, order_status)`. Se a tela ordena por data, `(customer_id, order_status, criado_em DESC)` elimina o `Sort`.
-- `order_status` sozinho, com 90% `delivered`, vira `Seq Scan`. Para o worker, índice parcial: `CREATE INDEX ... ON pedidos (criado_em) WHERE order_status = 'processing'`. Reconciliação da Aula 2: `ON pagamento (criado_em) WHERE status = 'PENDENTE'`.
+- A consulta do incidente, diagnóstico, é `WHERE customer_id = ? AND order_status = 'processing'`. `processing` é valor legado do exercício, não estado do CHECK do checkout. Dois índices separados viram filtro ou `BitmapAnd`. O composto é `(customer_id, order_status)`. Se a tela ordena por data, `(customer_id, order_status, criado_em DESC)` elimina o `Sort`.
+- `order_status` sozinho, com 90% `delivered` (também valor legado do exercício), vira `Seq Scan`. Para o worker do incidente, índice parcial: `CREATE INDEX ... ON pedidos (criado_em) WHERE order_status = 'processing'`. Reconciliação da Aula 2: `ON pagamento (criado_em) WHERE status = 'PENDENTE'`.
 - Cada índice é atualizado em todo `INSERT` e em `UPDATE` de coluna indexada. Indexar `order_status` tira o HOT update.
 - No laboratório, os índices de `olist_orders` somavam 13 MB contra 12 MB da tabela.
 - O PR precisa de `EXPLAIN` antes e depois e de `CREATE INDEX CONCURRENTLY`. Depois, `pg_stat_user_indexes` com `idx_scan = 0` mostra índice sem uso.
