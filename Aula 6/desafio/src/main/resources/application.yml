@@ -6,7 +6,7 @@ management:
   endpoints.web.exposure.include: health,info
   endpoint.health.probes.enabled: true
 checkout:
-  # Decisao operacional (a aula nao fixa estes tetos). R$ 2.000 por cliente e R$ 8.000.000 no total.
+  # Fixture do laboratorio para o smoke subir. O teto de producao e 1,5 vez a soma medida na hora anterior.
   teto-pendente-cliente-centavos: 200000
   teto-pendente-global-centavos: 800000000
   webhook-segredo: ${WEBHOOK_SEGREDO:segredo-de-exemplo}

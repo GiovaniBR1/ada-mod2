@@ -34,7 +34,7 @@ O que o projeto prova, sem um collector de verdade:
 
 Os participantes, o teto e a idempotência do webhook estão em memória. Em produção isso mora no PostgreSQL, com `UNIQUE` no id do pagamento, como nas aulas anteriores. O histograma guarda as amostras individuais só para o teste mostrar o percentil exato (teto de 20.000). O número que o painel usa é o quantil calculado pelos baldes.
 
-O teto deste projeto de teste é R$ 100 por cliente, para a segunda compra de R$ 80 estourar o limite numa execução curta. O teto descrito no system design (R$ 2.000 por cliente e R$ 8.000.000 no total) é o da produção e está no `application.yml` usado pelo smoke.
+O teto deste projeto de teste é R$ 100 por cliente, para a segunda compra de R$ 80 estourar o limite numa execução curta. R$ 2.000 por cliente e R$ 8.000.000 no total, no `application.yml`, são fixture para o smoke subir. O teto de produção é o do system design: 1,5 vez a soma medida na hora anterior.
 
 ## Como rodar
 
