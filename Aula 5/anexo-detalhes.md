@@ -43,7 +43,7 @@ docker push registry/checkout:1.5.0-a1b2c3d
 Quatro motivos da convivência, em detalhe:
 
 1. Banco: as duas versões funcionam com o schema da seção de migração.
-2. API: a v2 só acrescenta campos opcionais. Nada some e nada muda de sentido nesta release. O comportamento novo da saga fica atrás de flag até a v2 estar em 100%.
+2. API: a v2 só acrescenta campos opcionais. Nada some e nada muda de sentido nesta release. A flag `saga_estados_v2` liga a saga nova. O Argo Rollouts a opera no degrau: ela já está ligada em 1% e 5%, com os mesmos sinais. O rollback aos 20% descreve o estado que a flag já gravou (`CONCLUIDO` e `CANCELADO_COM_ESTORNO`).
 3. Mensagens: chave `orderId`. Quando o Kafka redistribui partições, pode entregar a mensagem duas vezes. O consumidor grava o `message_id` com `UNIQUE` e ignora o repetido. O reenvio do job usa esse mesmo `message_id` (apêndice), não um id novo.
 4. Webhook do PSP: as duas versões verificam o HMAC, gravam `UNIQUE(pagamento_id)` e respeitam o mesmo teto de Pix em `AGUARDANDO_PAGAMENTO`. O número do teto é o medido na Aula 6.
 

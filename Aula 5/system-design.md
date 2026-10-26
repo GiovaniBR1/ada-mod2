@@ -46,7 +46,7 @@ SQL, degraus do canary, gates e o custo de cada escolha estão no [anexo](anexo-
   > Decisão: canary. A versão nova nasce além da frota estável: 1% (~50 TPS, 10 min), 5% (~250 TPS, 10 min), 20% (~1.000 TPS, 15 min), 50% (~2.500 TPS, 15 min), 100%. O Argo Rollouts só avança com readiness 200.
   > Por quê: blue-green dobraria máquina no pico e viraria 100% num clique, e o banco continuaria um só. Duas leituras ruins abortam sozinhas. HTTP 5xx da nova não passa de 0,5% nem de 1,5 vez a estável; p99 não sobe mais de 20%; zero erro de coluna; pool abaixo de 80%. No negócio: `CONCLUIDO`, parado além do prazo, e zero `CONCLUIDO` sem reserva.
   > Exemplo: o webhook do Pix de um pedido da estável pode cair na nova. As duas conferem o HMAC e gravam com `UNIQUE(pagamento_id)`. O degrau de 20% devolve 100% à estável, sem desfazer migração. A estável segue dimensionada para 5.000 TPS.
-  > Duas versões convivem com campos opcionais, flag da saga até 100% e chave `orderId`. Tabela: [anexo, canary](anexo-detalhes.md#canary).
+  > Duas versões convivem com campos opcionais e chave `orderId`. A flag `saga_estados_v2` liga a saga nova e é um degrau do canary: o Argo Rollouts a opera, já em 1% e 5%, com os mesmos sinais. O rollback aos 20% lê o estado que a flag já gravou (`CONCLUIDO`, `CANCELADO_COM_ESTORNO`). Tabela: [anexo, canary](anexo-detalhes.md#canary).
 
 ### 2.2 Evolução de Schema Sem Downtime e Plano de Rollback
 
