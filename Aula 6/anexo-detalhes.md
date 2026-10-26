@@ -13,7 +13,7 @@ Uma linha do pedido 48213 quando o PSP não responde:
 | Campo | Para que serve |
 | :--- | :--- |
 | `ts` | Ordenar o pedido e saber se caiu dentro do canary. |
-| `level` | `INFO` ou `ERROR`. Em produção: 100% em `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA` e `CANCELADO_COM_ESTORNO`, além de erro, estado de verificação (`ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`) e HTTP 5xx; 5% só no caminho feliz `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`. Quatro linhas por pedido a 5.000/s seriam 20.000 linhas/s; se todo pedido estivesse no caminho feliz, 5% disso seriam cerca de 1.000 linhas/s. Esse 1.000 é só essa fatia: os estados de 100%, entre eles `CANCELADO_SEM_COBRANCA`, somam por cima, e na Black Friday essa fração pode não ser pequena. |
+| `level` | `INFO` ou `ERROR`. 100% no erro, no HTTP 5xx, na verificação e em `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO`. 5% só em `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`. Uma linha por esses quatro, a 5.000 pedidos/s, seriam 20.000 linhas/s; 5% disso são cerca de 1.000 linhas/s, só essa fatia. |
 | `service` | `checkout`, `pagamento` ou `estoque`. |
 | `trace_id` | A requisição inteira, igual nos três serviços. |
 | `span_id` | Reservar e confirmar têm o mesmo `trace_id` e `span_id` diferentes. |
@@ -23,7 +23,7 @@ Uma linha do pedido 48213 quando o PSP não responde:
 | `cliente_ref` | 12 hex. O CPF não entra na linha. |
 | `msg` | Frase fixa quando a resposta não chega: "consultando status antes de decidir". O teste procura essa frase e o `trace_id` na mesma linha. |
 
-Volume, decisão: Em produção: 100% em `ESTORNANDO`, `ESTORNO_EM_REVISAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA` e `CANCELADO_COM_ESTORNO`, além de erro, estado de verificação (`ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`) e HTTP 5xx; 5% só no caminho feliz `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`. Quatro linhas por pedido a 5.000/s seriam 20.000 linhas/s; se todo pedido estivesse no caminho feliz, 5% disso seriam cerca de 1.000 linhas/s. Esse 1.000 é só essa fatia: os estados de 100%, entre eles `CANCELADO_SEM_COBRANCA`, somam por cima, e na Black Friday essa fração pode não ser pequena. O laboratório guarda todas as linhas na memória para o teste achar a frase.
+O laboratório guarda todas as linhas na memória para o teste achar a frase. Os estados de 100%, entre eles `CANCELADO_SEM_COBRANCA`, somam por cima dessa fatia de 1.000 linhas/s.
 
 | Estado | Dinheiro e estoque |
 | :--- | :--- |
@@ -59,7 +59,7 @@ O HTTP de finalizar pode responder 202 rápido e o resto seguir num consumidor, 
 
 A chave de partição do Kafka é o `orderId`. O Kafka só garante ordem dentro de uma partição, e a mesma chave cai sempre na mesma partição. Assim, reservar, pagar e confirmar do pedido 48213 são lidos em ordem. A chave `skuId` faria o contrário: os pedidos do produto `FONE-BF` cairiam todos na mesma partição. O teste `chaveSkuCaiNumaParticaoSoEOrderIdEspalha` usa 12 partições (decisão do projeto): `FONE-BF` ocupa 1, e 2.000 `orderId` diferentes ocupam mais de 6. `clienteId` juntaria pedidos diferentes da mesma pessoa. `traceId` separaria os eventos do mesmo pedido se uma retentativa abrisse outro trace.
 
-Transição condicional: `UPDATE ... WHERE estado = 'AGUARDANDO_PAGAMENTO'`. `PagamentoAprovado` depois de `CANCELADO_SEM_COBRANCA`, com o dinheiro capturado, leva o pedido a `ESTORNANDO`, como no apêndice da Aula 4. O teste `semSaldoCancelaSemCobrancaENaoConfirma` é o outro caso: nada foi capturado, o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
+Transição condicional: `UPDATE ... WHERE estado = 'AGUARDANDO_PAGAMENTO'`. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento). O teste `semSaldoCancelaSemCobrancaENaoConfirma` é o outro caso: nada foi capturado, o estado continua `CANCELADO_SEM_COBRANCA` e o contador de cobranças continua em zero.
 
 Webhook do PSP: o parceiro não conhece o nosso trace. Na criação do pagamento gravamos `pagamentoId = "pag-" + orderId` e o `trace_id` no pedido. O webhook manda `pag-48213|48213|PAGO`, achamos o pedido e a linha nova reusa o `trace_id` original. A assinatura é HMAC-SHA256 do corpo exato, no cabeçalho `X-Assinatura`. Assinatura errada responde 401 e não muda o estado. O mesmo `pagamentoId` na segunda vez responde "repetido" e não confirma o estoque de novo (`webhookPagoConfirmaUmaVezEAssinaturaErradaNaoMudaNada`).
 
@@ -72,7 +72,7 @@ Webhook do PSP: o parceiro não conhece o nosso trace. Na criação do pagamento
 | Valor, estado, duração, serviço, versão, código HTTP | Como estão. | Não identificam a pessoa. |
 | "2% da v2 passou de 1 s" | Agregado, sem identificador. | Dado anonimizado. |
 
-O art. 12 diz que o dado anonimizado deixa de ser dado pessoal, salvo se o processo puder ser revertido com esforço razoável. O art. 13, §4º, define pseudonimização no artigo de pesquisa em saúde; a técnica é a mesma do `cliente_ref`: a associação só volta com a chave, guardada à parte, em ambiente controlado. Enquanto a chave existir, o ref pode ser revertido.
+O art. 12 diz que o dado anonimizado deixa de ser dado pessoal, salvo se o processo puder ser revertido. Com a chave dá para voltar à pessoa, então `cliente_ref` continua dado pessoal. O art. 13, §4º só define pseudonimização, e é norma de pesquisa em saúde, não o art. 5º, XI.
 
 ## RED
 
@@ -155,7 +155,7 @@ Premissas marcadas como estimativa: 6 spans por pedido (entrada, checkout, reser
 - Com 2% travados (100 pedidos/s) guardados por inteiro e 1% do restante (49/s), seguem cerca de 150 traces/s, perto de 3% do volume, cerca de 80 GB/dia.
 - Em produção o HTTP de `finalizar` devolve 202 e o comando segue por Kafka, via outbox (Aula 4). O `decision_wait` de 15 s é a janela em que os spans desse `trace_id` ainda chegam: o 202 e o span do consumidor. Traces em voo = 5.000 × 15 = 75.000. Memória ≈ 75.000 × 6 KB = 450 MB (estimativa). Pedido de memória do collector: 2 GB (decisão), com alerta de fila. Se a fila encher, o tail degrada, e o alerta existe para ver isso antes de perder o trace lento.
 - A espera do Pix (15 min), o `prazo_passo` de 30 s do `PAGO` e as retentativas do estorno são outros traces, ligados por `order_id` e links de span, e não entram no `decision_wait`.
-- Orçamentos separados. A Aula 2 espera 2 s de resposta do parceiro. A Aula 4 espera 3 s na chamada de estorno. Os 8 s desta aula são a estimativa da lei de Little e o sono injetado no teste de estoque, não um timeout do Checkout ao Estoque. Não há timeout síncrono de 5 s do Checkout ao Pagamento: o 5 s do estorno é a segunda espera em `proxima_tentativa_em`.
+- Orçamentos separados. A Aula 2 espera 2 s de resposta do parceiro. O timeout HTTP de 3 s do estorno está no desenho da Aula 4. Os 8 s desta aula são a estimativa da lei de Little e o sono injetado no teste de estoque, não um timeout do Checkout ao Estoque. Não há timeout síncrono de 5 s do Checkout ao Pagamento: o 5 s do estorno é a segunda espera em `proxima_tentativa_em`.
 - `CheckoutService.finalizar` no laboratório ainda chama reservar, cobrar e confirmar no mesmo processo, para o teste ver o estado. Isso simula a borda por simplicidade e não é o transporte de produção.
 - Prazo depois de aceito: 7 dias (decisão, seção de LGPD).
 
