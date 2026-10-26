@@ -26,7 +26,8 @@ Tabelas: [anexo](anexo-detalhes.md).
 - **A Escolha:** ( ) Sequence / Identity ( ) UUIDv4 (X) UUIDv7 / TSID
 - **Impacto no Armazenamento:**
   > A chave é UUIDv7, gerada no Java, em `uuid` de 16 bytes. UUIDv7: um id que cresce com o tempo.
-  > Sequence pede um contador central. `IDENTITY` desliga o lote do Hibernate. UUIDv4 espalha o `INSERT` e parte a página da B-Tree no meio. B-Tree: a árvore ordenada do índice.
+  > Sequence pede um contador central. `IDENTITY` (id do banco, um a um) desliga o lote do Hibernate (o JPA que grava). UUIDv4 espalha o `INSERT`.
+  > A página da B-Tree parte no meio. B-Tree: a árvore ordenada do índice.
   > Em 300 mil linhas, o índice da chave aleatória em texto ficou em 22 MB; o da chave sequencial, em 6,6 MB. Parte da diferença é o tamanho do texto. O v7 cresce à direita, e o id existe antes do `INSERT`.
   > O v7 mostra o horário de criação. Quem não é dono do pedido recebe 404. A Idempotency-Key segue o UUID do cliente, por 24 h. [Chave](anexo-detalhes.md#chave).
 
@@ -37,7 +38,9 @@ Tabelas: [anexo](anexo-detalhes.md).
   > A chave de idempotência tem `UNIQUE (chave)` em `idempotency_keys`. O pagamento tem `UNIQUE (order_id)`.
   > `pagamento.status` nesta aula: `PENDENTE`, `APROVADO`, `RECUSADO` e `EXPIRADO`.
   > `order_status` nesta aula: `PENDENTE` e `PAGAMENTO_EM_VERIFICACAO`. `processing` e `delivered` são o valor antigo do exercício, só na consulta do incidente.
-  > Quando o pagamento vem `APROVADO`, a reserva fica `CONFIRMADA` e `order_status` permanece `PENDENTE`. Só timeout ou 500 trocam esse token para `PAGAMENTO_EM_VERIFICACAO`. [Modelo](anexo-detalhes.md#modelo).
+  > Quando o pagamento vem `APROVADO`, a reserva fica `CONFIRMADA` e `order_status` permanece `PENDENTE`. Quem olha só o pedido não separa reservado de pago.
+  > O pago está em `pagamento.status`. A linha `PENDENTE` nasce se a chamada já saiu e a resposta é ambígua ou esgotada.
+  > Entram timeout, 500, ou 503/429 depois das 3 tentativas. Aí `order_status` vai para `PAGAMENTO_EM_VERIFICACAO`. [Modelo](anexo-detalhes.md#modelo).
 
 ## 2. A Dualidade da Concorrência: Locks e Mitigações
 
@@ -46,8 +49,8 @@ Tabelas: [anexo](anexo-detalhes.md).
 - **Abordagem de Lock:** (X) Lock Otimista (`@Version`) ou ( ) Lock Pessimista (`SELECT FOR UPDATE`)?
 - **Justificativa:**
   > A escolha é lock otimista (`@Version`): não trava a linha, confere a versão ao gravar.
-  > Zero linhas viram `OptimisticLockException`. Quem perde relê e não reabre o que fechou.
-  > `AND status = 'PENDENTE'` segura o caminho normal. Esse `PENDENTE` é só timeout ou 500 na linha de pagamento. [Pagamento](anexo-detalhes.md#pagamento).
+  > Zero linhas viram `OptimisticLockException` (versão velha: outro gravou antes). Quem perde relê e não reabre o que fechou.
+  > `AND status = 'PENDENTE'` segura o caminho normal. Essa linha nasce se a chamada já saiu e a resposta é ambígua ou esgotada. [Pagamento](anexo-detalhes.md#pagamento).
 
 ### 2.2 Controle de Estoque Concorrente (Alta contenção no mesmo registro)
 
@@ -56,8 +59,9 @@ Tabelas: [anexo](anexo-detalhes.md).
   > A escolha é um `UPDATE` condicional no fim da primeira transação. A leitura não trava a linha.
   > Só baixa se ainda houver unidade. Zero linhas viram 409. `CHECK (disponivel >= 0)` é a segunda trava. A chamada ao parceiro fica fora da transação.
   > Essa transação grava a chave, o pedido `PENDENTE` e a reserva `ATIVA`, e então baixa o estoque. Não grava pagamento.
-  > A seguinte grava o pagamento: `APROVADO` ou `RECUSADO`. Timeout ou 500 deixam a linha `PENDENTE` e o pedido em `PAGAMENTO_EM_VERIFICACAO`. 503 sem chamada não cria linha.
-  > Os 4 ms são hipótese, não uma medida: 1000 ÷ 4 ms ≈ 250 compras/s num produto. Bulkhead de 8 vagas por réplica devolve 503 em 50 ms. [Estoque](anexo-detalhes.md#estoque).
+  > A seguinte grava `APROVADO` ou `RECUSADO`. Se a chamada já saiu e a resposta é ambígua ou esgotada, a linha fica `PENDENTE` e o pedido vai para `PAGAMENTO_EM_VERIFICACAO`.
+  > Entram timeout, 500, ou 503/429 depois das 3 tentativas. Chamada que não saiu não cria linha.
+  > Os 4 ms são hipótese: 1000 ÷ 4 ≈ 250 compras/s num produto. O bulkhead de 8 vagas está no [anexo](anexo-detalhes.md#estoque).
 
 ### 2.3 Riscos e Mitigações
 

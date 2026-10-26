@@ -1,6 +1,6 @@
 # Anexo da Aula 3 — tabelas, contas e planos
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam as tabelas, o SQL, os planos e o diagrama.
+Aqui ficam as tabelas, o SQL, os planos e o diagrama.
 
 <a id="fronteira"></a>
 ## Fronteira de consistência
@@ -46,7 +46,7 @@ IDs são `uuid` v7; dinheiro é `numeric(12,2)`, nunca `float`; datas são `time
 |---|---|---|
 | `produto` | `sku text`, `nome text`, `preco numeric(12,2)`, `atributos jsonb` | PK `sku`; `CHECK (preco > 0)`. É daqui que sai o preço cobrado. |
 | `estoque` | `sku text`, `disponivel int` | PK e FK `sku` → `produto`; `CHECK (disponivel >= 0)`. Sem `@Version`: a trava é o `UPDATE` atômico. |
-| `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK (order_status IN ('PENDENTE','PAGAMENTO_EM_VERIFICACAO'))`; `@Version`. São os estados que esta aula grava: `PENDENTE` na T1 e `PAGAMENTO_EM_VERIFICACAO` no timeout ou 500. `processing` e `delivered` são só o valor legado do exercício, na consulta do incidente (`order_status = 'processing'`). Na Aula 4 a coluna passa a se chamar `status` e o CHECK passa a ter os doze estados do [apêndice](../Aula%204/apendice-maquina-de-estados.md). Não são duas colunas. |
+| `pedidos` | `id uuid`, `customer_id uuid`, `order_status text`, `total numeric(12,2)`, `criado_em timestamptz`, `version bigint` | PK `id`; `customer_id NOT NULL`; `CHECK (order_status IN ('PENDENTE','PAGAMENTO_EM_VERIFICACAO'))`; `@Version`. São os estados que esta aula grava: `PENDENTE` na T1 e `PAGAMENTO_EM_VERIFICACAO` quando a linha de pagamento fica `PENDENTE`. `processing` e `delivered` são só o valor legado do exercício, na consulta do incidente (`order_status = 'processing'`). |
 | `pagamento` | `id uuid`, `order_id uuid`, `valor numeric(12,2)`, `status text`, `version bigint`, `criado_em timestamptz` | FK `order_id` → `pedidos` e `UNIQUE (order_id)`; `CHECK (status IN ('PENDENTE','APROVADO','RECUSADO','EXPIRADO'))`, o cartão síncrono desta aula; `@Version`. |
 | `reserva` | `id uuid`, `order_id uuid`, `sku text`, `qtd int`, `status text`, `expira_em timestamptz` | FKs para `pedidos` e `estoque`; `UNIQUE (order_id, sku)`; `CHECK (qtd > 0)`; `CHECK (status IN ('ATIVA','CONFIRMADA','LIBERADA'))`; `expira_em NOT NULL`. |
 | `idempotency_keys` | `id uuid`, `chave uuid`, `hash_do_corpo text`, `status text`, `order_id uuid`, `resposta_status int`, `resposta jsonb`, `travado_ate timestamptz`, `expira_em timestamptz` | PK `id`; `UNIQUE (chave)`; `CHECK (status IN ('EM_PROCESSAMENTO','CONCLUIDA'))`; `resposta` nula até concluir; `expira_em` = criação + 24 h. |
@@ -69,12 +69,6 @@ class Pagamento {
     if (status != StatusPagamento.PENDENTE) return;   // caminho normal: ignora o que não é PENDENTE
     status = novo;
   }
-
-  void capturaTardia() {
-    // webhook de captura tardia: WHERE status = 'EXPIRADO' → APROVADO
-    if (status != StatusPagamento.EXPIRADO) return;
-    status = StatusPagamento.APROVADO;
-  }
 }
 ```
 
@@ -94,7 +88,7 @@ O lock de linha só é solto no commit. Esse `UPDATE` é o último comando da T1
 
 1. T1 (milissegundos): grava a `Idempotency-Key`, cria o pedido e a `reserva` (`ATIVA`, com `expira_em`) e, por último, baixa o estoque. Não grava pagamento. Se o `UPDATE` afetar 0 linhas, a T1 volta e a resposta é `409`.
 2. Chama o parceiro fora de transação (Resilience4j).
-3. T2, quando o parceiro responde: grava a linha de pagamento. Resultado claro nasce `APROVADO` ou `RECUSADO`. `PENDENTE` só se a chamada já saiu e o resultado é ambíguo (timeout ou 500); o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. Esse valor, e o `PENDENTE` da T1, já estão no `CHECK` de `order_status`. 503 sem chamada não cria linha. Se `RECUSADO` ou `EXPIRADO`, na mesma transação libera a reserva só se ainda estiver `ATIVA`. Se `APROVADO`, marca `CONFIRMADA`, com a mesma guarda.
+3. T2, quando o parceiro responde: grava a linha de pagamento. Resultado claro nasce `APROVADO` ou `RECUSADO`. A linha nasce `PENDENTE` quando a chamada já saiu e a resposta é ambígua ou esgotada (timeout, 500, ou 503/429 depois das 3 tentativas); o pedido fica em `PAGAMENTO_EM_VERIFICACAO`. Esse valor, e o `PENDENTE` da T1, já estão no `CHECK` de `order_status`. Chamada que não saiu não cria linha. Se `RECUSADO` ou `EXPIRADO`, na mesma transação libera a reserva só se ainda estiver `ATIVA`. Se `APROVADO`, marca `CONFIRMADA` e `order_status` permanece `PENDENTE`: quem olha só o pedido não separa reservado de pago.
 
 Máximo de compras/s por produto ≈ 1000 ms ÷ X, com X = tempo em ms que a T1 segura o lock. Hipótese, não medida.
 

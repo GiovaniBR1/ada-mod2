@@ -1,7 +1,5 @@
 # Perguntas de Risco: Aula 03 - Banco de Dados do Checkout
 
-Material extra: o template da Aula 03 não pede estas perguntas. Elas reforçam o `system-design.md`.
-
 O desenho usa duas transações curtas (a chamada ao parceiro fica no meio, fora de transação), lock otimista no pagamento, `UPDATE` condicional no estoque e reserva que muda uma vez só. A regra: estoque nunca negativo, pagamento fecha uma vez, falha nunca vira aprovado.
 
 Cada pergunta responde direto, depois o porquê, depois um exemplo e o teste.
