@@ -28,7 +28,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image
 - `mvn -B verify`: BUILD SUCCESS, 8 testes, 0 falhas (OpenJDK 21.0.12, Maven 3.9.9).
 - `docker build`: ok; imagem de 221 MB (a base distroless java21 sozinha tem 192 MB, então a meta de 120 MB do material não é alcançável com essa base sem `jlink`).
 - `scripts/smoke-test.sh`: SMOKE OK.
-- Trivy: a primeira versão (Spring Boot 3.3.5) **foi barrada** pelo gate (16 CVEs críticas em Tomcat e Spring); depois de subir para Spring Boot 4.1.1, ainda havia 6 no Tomcat 11.0.24; com `tomcat.version` 11.0.25: **0 CRITICAL**, exit 0. Sistema operacional (debian 12.13 da distroless): 0.
-- Revisão de 19/10 (referências da aula): base trocada para distroless Debian 13 por digest, seed movido para os testes, gate de configuração da imagem. `mvn -B verify` 8/8; build ok (220 MB); SMOKE OK; Trivy CRITICAL: 0 (exit 0); Trivy da configuração: 0 falhas (exit 0). Restam 4 HIGH (libuuid1 do Debian e Jackson 3.1.5) sem gate, só alerta, como no design.
+- Trivy: o gate falha em CVE crítica com correção publicada (`--severity CRITICAL --ignore-unfixed`). O `pom.xml` usa Spring Boot 4.1.1 e fixa `tomcat.version` em 11.0.25. A release 11.0.25 (18/08/2026) corrige falhas públicas da linha até 11.0.24. Contagens fechadas de um scan antigo não são repetidas aqui, porque o relatório desse scan não está no repositório.
+- Revisão de 19/10 (referências da aula): base trocada para distroless Debian 13 por digest (`gcr.io/distroless/java21-debian13:nonroot`), seed movido para os testes, gate de configuração da imagem. `mvn -B verify` 8/8; SMOKE OK. CVE alta gera alerta e não bloqueia o gate.
 - Para chegar perto de 120 MB: JRE mínima com `jlink` (no Paketo, `BP_JVM_JLINK_ENABLED=true`).
 - Não validado: PostgreSQL real e `lock_timeout` (os testes usam H2 em modo PostgreSQL); execução do workflow no GitHub Actions.
