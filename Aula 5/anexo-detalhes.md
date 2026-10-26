@@ -157,7 +157,7 @@ Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma man
 
 (a) Backfill de nome, na migração, partindo da coluna antiga já gravada pela v1.5. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO` em `estado_saga`. `CONFIRMADO` vira `CONCLUIDO`.
 
-(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Depois do backfill, a v1.5 grava o nome canônico em `estado_saga` e o token antigo só em `status_pagamento`. Neste passo os dois são `PAGO`.
+(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Onde o nome é o mesmo nos dois vocabulários (ex.: `PAGO`), `estado_saga` e `status_pagamento` recebem o mesmo valor. "Token antigo só em `status_pagamento`" vale só para os pares que mudam de nome: `CONFIRMADO`/`CONCLUIDO`, `AGUARDANDO_PIX`/`AGUARDANDO_PAGAMENTO`, e `CANCELADO` com os três destinos. A escrita viva da conclusão continua em (c): `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`.
 
 (c) Conclusão, na v1.5 e na v2, partindo do pedido que acabou de ser pago. `estado_saga` fica `CONCLUIDO` e `status_pagamento` fica `CONFIRMADO`. A v1.5 não regrava o token legado em `estado_saga`.
 
