@@ -32,7 +32,8 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 - **A Escolha:** (X) Canary Release (Liberação Gradual por Percentual)  ( ) Blue-Green Deployment (Alternância de Ambientes)
 - **Justificativa e Mitigação das Desvantagens do seu Modelo:**
   > A escolha é canary. Canary: a versão nova recebe uma fatia do tráfego.
-  > TPS é pedidos por segundo. Degraus: 1% (~50 TPS, 10 min), 5% (~250 TPS, 10 min), 20% (~1.000 TPS, 15 min), 50% (~2.500 TPS, 15 min), 100%. Só avança com readiness 200.
+  > TPS é pedidos por segundo. Degraus: 1% (~50 TPS, 10 min), 5% (~250 TPS, 10 min), 20% (~1.000 TPS, 15 min), 50% (~2.500 TPS, 15 min), 100%.
+  > Readiness: o pod está pronto. Só avança com HTTP 200.
   > Blue-green dobraria máquina no pico e viraria 100% num clique. O banco continuaria um só.
   > Duas leituras ruins abortam. HTTP 5xx da nova: até 0,5% e até 1,5 vez a estável. p99 não sobe mais de 20%. Zero erro de coluna. Pool abaixo de 80%. No negócio: nasce `CONCLUIDO`, parado além do prazo dispara, e não há `CONCLUIDO` sem reserva.
   > Webhook da estável pode cair na nova. As duas conferem o HMAC e só mudam a linha se status ainda é `AGUARDANDO_CAPTURA` ou `EXPIRADO`. A estável segue pronta para 5.000 TPS.
@@ -42,11 +43,17 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 
 - **Passo a Passo da Migração:**
   > A escolha é expand/contract em três releases. Primeiro acrescenta a coluna. As duas versões convivem. Só depois a antiga sai.
-  > `pedidos.status` da Aula 4 é o `status_pagamento` deste enunciado. A coluna nova, ao lado, é `estado_saga`.
-  > A v1 do enunciado só lê a coluna antiga e fica no ar no expand. A v1.5 lê `status_pagamento` e grava as duas. A v2 lê `estado_saga` e também grava as duas. O contract (v2.1, `V12`) tira a antiga fora do pico.
-  > A migração é um Job, com usuário próprio, `lock_timeout` de 3 s e `spring.flyway.enabled=false`. A aplicação não tem `ALTER`.
-  > `V10` acrescenta `estado_saga` nula. `V11` copia em lotes de 5.000. O backfill roda no banco de cada dono. O Checkout só lê `pedidos`. O Pagamento classifica `CANCELADO` e devolve `(order_id, destino)`.
-  > `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO`. `CONFIRMADO` e `CONCLUIDO` são o par que muda de nome. `PAGO` é o mesmo token nas duas colunas. A escrita viva da v1.5 grava `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`.
+  > `pedidos.status` da Aula 4 é o `status_pagamento`. A coluna nova, ao lado, é `estado_saga`.
+
+  | Versão | Lê | Grava |
+  | :--- | :--- | :--- |
+  | v1 | a coluna antiga | sai antes do canary |
+  | v1.5 | `status_pagamento` | as duas colunas |
+  | v2 | `estado_saga` | as duas colunas |
+  | v2.1, `V12` | `estado_saga` | só a nova |
+
+  > `V10` acrescenta `estado_saga` nula. `V11` copia em lotes de 5.000. O Job tem usuário próprio e `lock_timeout` de 3 s. A aplicação não tem `ALTER`.
+  > O Pagamento devolve `(order_id, destino)`. Sem destino, o lote falha e `estado_saga` fica nulo. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO`. `CONFIRMADO` vira `CONCLUIDO`.
   > Antes de seguir: zero nulos em `estado_saga`. [Migração](anexo-detalhes.md#migracao).
 - **Garantia de Rollback Imediato:**
   > A volta é para a v1.5, não para a v1 do enunciado. Nenhuma migração é desfeita.
@@ -62,7 +69,8 @@ Detalhe: [anexo](anexo-detalhes.md). Estados: [apêndice](../Aula%204/apendice-m
 - **Guardrails do Commit ao Deploy:**
   > O `RENAME` de `status_pagamento` para no pull request. Entram `mvn -B verify` (JDK 21), gitleaks (barra segredo no git), CodeQL (busca falha no código), hadolint (confere o Dockerfile) e `flyway validate`.
   > `DROP`, `RENAME` ou `ALTER ... TYPE` reprovam, salvo contract que prove que produção já não lê a coluna. `db/migration/` exige o time de dados. A `main` recusa push direto.
-  > No merge, um build: `cosign verify`, SBOM (a lista do que entrou na imagem) e `trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed`. CVE alta alerta e não bloqueia. A imagem sai assinada, com tag imutável.
+  > No merge, um build: `cosign verify` (confere a assinatura), SBOM (a lista do que entrou na imagem) e `trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed`.
+  > CVE (falha publicada) crítica bloqueia. CVE alta só alerta. A imagem sai assinada, com tag imutável.
   > O admission recusa imagem sem assinatura, por tag, como root ou sem SBOM. [Gates](anexo-detalhes.md#gates).
 - **Governança e Controle em Produção:**
   > Produção só muda por GitOps: o cluster aplica o git. O Argo CD (aplica o git no cluster) desfaz divergência. Não há `kubectl apply` pessoal. Há promoção de um digest.

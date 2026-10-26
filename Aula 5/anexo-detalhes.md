@@ -1,6 +1,6 @@
 # Anexo da Aula 5 — SQL, degraus, gates
 
-O texto principal responde cada pergunta em poucas linhas. Aqui ficam os scripts, as tabelas e o custo de cada escolha. Estados do pedido: [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md).
+Aqui ficam os scripts, as tabelas e o custo de cada escolha. Estados do pedido: [apêndice da Aula 4](../Aula%204/apendice-maquina-de-estados.md).
 
 ## Imagem
 
@@ -69,7 +69,7 @@ A 5.000 TPS sempre há transações abertas. Um `ALTER` esperando trava quem che
 <a id="mapa-de-pares"></a>
 ## Mapa de pares
 
-O backfill roda no banco de cada serviço, só nas tabelas daquele serviço. O Checkout não lê `pagamento` nem `estorno`. O Pagamento classifica o `CANCELADO` e devolve a lista `(order_id, destino)`. O Checkout grava essa lista na tabela local `legado_cancelado` e só então atualiza `pedidos`. `status_pagamento` é a coluna antiga da v1.5. `estado_saga` é a coluna nova. Na Aula 4 o estado vivo se chama `pedidos.status`. `CANCELADO` capturado e sem confirmação vai para `ESTORNO_EM_REVISAO`, balde único do legado. O `V4` do H2 não é este script: ainda copia `CONFIRMADO`, porque o teste espera esse token.
+O backfill roda no banco de cada serviço. O Checkout não lê `pagamento` nem `estorno`. O Pagamento devolve `(order_id, destino)` e o job copia em `legado_cancelado`. Sem destino, `estado_saga` fica nulo e o lote falha. `CANCELADO_SEM_COBRANCA` só entra com destino explícito, inclusive a marca de consulta concluída sem linha. `status_pagamento` é a coluna antiga. `estado_saga` é a nova. Na Aula 4 o estado vivo se chama `pedidos.status`.
 
 Zero linha fora do mapa: um token que não está na tabela abaixo faz o script lançar exceção. Os doze estados do apêndice entram no mapa como o mesmo token, então uma linha que já os carrega não dispara essa exceção.
 
@@ -78,9 +78,10 @@ Zero linha fora do mapa: um token que não está na tabela abaixo faz o script l
 | `AGUARDANDO_PIX` | `AGUARDANDO_PAGAMENTO` |
 | `CONFIRMADO` | `CONCLUIDO` |
 | `RESERVANDO_ESTOQUE` | `PENDENTE` |
-| `CANCELADO` sem captura | `CANCELADO_SEM_COBRANCA` |
-| `CANCELADO` com estorno confirmado | `CANCELADO_COM_ESTORNO` |
-| `CANCELADO` com captura e sem confirmação de estorno | `ESTORNO_EM_REVISAO` |
+| `CANCELADO` sem captura, com destino explícito ou marca de consulta concluída sem linha | `CANCELADO_SEM_COBRANCA` |
+| `CANCELADO` com estorno `CONCLUIDO` | `CANCELADO_COM_ESTORNO` |
+| `CANCELADO` com estorno `FALHOU` | `ESTORNO_FALHOU` |
+| `CANCELADO` com captura e sem estorno concluído nem falho | `ESTORNO_EM_REVISAO` |
 | `CANCELADO` com `pagamento.status = PENDENTE` | `PAGAMENTO_EM_VERIFICACAO` |
 | `PENDENTE`, `AGUARDANDO_PAGAMENTO`, `PAGO`, `CONCLUIDO`, `ESTORNANDO`, `ESTORNO_EM_REVISAO` | o mesmo token |
 | `ESTOQUE_EM_VERIFICACAO`, `PAGAMENTO_EM_VERIFICACAO`, `CONFIRMACAO_EM_VERIFICACAO`, `ESTORNO_FALHOU`, `CANCELADO_SEM_COBRANCA`, `CANCELADO_COM_ESTORNO` | o mesmo token (já é um dos doze) |
@@ -132,26 +133,28 @@ BEGIN
     EXIT WHEN n = 0;
     PERFORM pg_sleep(0.05);
   END LOOP;
-  -- legado_cancelado já tem o retorno. Sem retorno, não houve linha de pagamento.
-  INSERT INTO legado_cancelado (order_id, destino)
-  SELECT p.id, 'CANCELADO_SEM_COBRANCA'
-    FROM pedidos p
-   WHERE p.status_pagamento = 'CANCELADO'
-     AND p.estado_saga IS NULL
-     AND NOT EXISTS (SELECT 1 FROM legado_cancelado c WHERE c.order_id = p.id);
+  -- Sem destino o lote falha. Não inventa CANCELADO_SEM_COBRANCA.
   UPDATE pedidos p
      SET estado_saga = c.destino
     FROM legado_cancelado c
    WHERE p.id = c.order_id
      AND p.status_pagamento = 'CANCELADO'
      AND p.estado_saga IS NULL
-     AND c.destino IN ('CANCELADO_SEM_COBRANCA','CANCELADO_COM_ESTORNO','ESTORNO_EM_REVISAO','PAGAMENTO_EM_VERIFICACAO');
+     AND c.destino IN ('CANCELADO_SEM_COBRANCA','CANCELADO_COM_ESTORNO','ESTORNO_EM_REVISAO','ESTORNO_FALHOU','PAGAMENTO_EM_VERIFICACAO');
+  IF EXISTS (
+    SELECT 1 FROM pedidos
+     WHERE status_pagamento = 'CANCELADO' AND estado_saga IS NULL
+  ) THEN
+    RAISE EXCEPTION 'CANCELADO sem destino do Pagamento';
+  END IF;
 END $$;
 ```
 
 ```sql
 -- Banco do Pagamento. Devolve (order_id, destino). Não grava no Checkout.
 -- ids = pedidos CANCELADO. O job copia o retorno em legado_cancelado.
+-- Id do lote sem linha, com a consulta concluída, ganha marca explícita.
+-- Se o banco do Pagamento não responde, o job não grava e o Checkout falha o lote.
 CREATE OR REPLACE FUNCTION pagamento_classifica_cancelado(ids uuid[])
 RETURNS TABLE (order_id uuid, destino text)
 LANGUAGE sql AS $$
@@ -162,12 +165,26 @@ LANGUAGE sql AS $$
         SELECT 1 FROM estorno e
          WHERE e.pagamento_id = g.id AND e.status = 'CONCLUIDO')
         THEN 'CANCELADO_COM_ESTORNO'
+      WHEN g.status = 'APROVADO' AND EXISTS (
+        SELECT 1 FROM estorno e
+         WHERE e.pagamento_id = g.id AND e.status = 'FALHOU')
+        THEN 'ESTORNO_FALHOU'
       WHEN g.status = 'APROVADO' THEN 'ESTORNO_EM_REVISAO'
       ELSE 'CANCELADO_SEM_COBRANCA'
     END
   FROM pagamento g
   WHERE g.order_id = ANY (ids);
 $$;
+```
+
+```sql
+-- Job, depois da função. Marca só o id consultado que não tinha linha.
+INSERT INTO legado_cancelado (order_id, destino)
+SELECT f.order_id, f.destino FROM pagamento_classifica_cancelado(:ids) f;
+INSERT INTO legado_cancelado (order_id, destino)
+SELECT i.id, 'CANCELADO_SEM_COBRANCA'
+  FROM unnest(:ids) AS i(id)
+ WHERE NOT EXISTS (SELECT 1 FROM pagamento g WHERE g.order_id = i.id);
 ```
 
 O laboratório não roda essa função. O `V4` do H2 ainda copia `CONFIRMADO`, porque o teste espera esse token, e não prova este mapa.
@@ -178,7 +195,7 @@ Três escritas, cada uma com a sua versão e o seu ponto de partida. Nenhuma man
 
 (a) Backfill de nome, na migração, partindo da coluna antiga já gravada pela v1.5. `AGUARDANDO_PIX` vira `AGUARDANDO_PAGAMENTO` em `estado_saga`. `CONFIRMADO` vira `CONCLUIDO`.
 
-(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Onde o nome é o mesmo nos dois vocabulários (ex.: `PAGO`), `estado_saga` e `status_pagamento` recebem o mesmo valor. "Token antigo só em `status_pagamento`" vale só para os pares que mudam de nome: `CONFIRMADO`/`CONCLUIDO`, `AGUARDANDO_PIX`/`AGUARDANDO_PAGAMENTO`, e `CANCELADO` com os três destinos. A escrita viva da conclusão continua em (c): `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`.
+(b) Webhook numa réplica v1.5, partindo de `AGUARDANDO_PIX`. Onde o nome é o mesmo nos dois vocabulários (ex.: `PAGO`), `estado_saga` e `status_pagamento` recebem o mesmo valor. "Token antigo só em `status_pagamento`" vale só para os pares que mudam de nome: `CONFIRMADO`/`CONCLUIDO`, `AGUARDANDO_PIX`/`AGUARDANDO_PAGAMENTO`, e `CANCELADO` com o destino explícito do mapa. A escrita viva da conclusão continua em (c): `estado_saga = CONCLUIDO` e `status_pagamento = CONFIRMADO`.
 
 (c) Conclusão, na v1.5 e na v2, partindo do pedido que acabou de ser pago. `estado_saga` fica `CONCLUIDO` e `status_pagamento` fica `CONFIRMADO`. A v1.5 não regrava o token legado em `estado_saga`.
 
@@ -221,7 +238,7 @@ Break-glass: 1 hora, justificativa, alerta ao time de segurança, cada comando n
 2. Migração numa cópia do schema de produção, em PostgreSQL de verdade, com dados sintéticos no mesmo volume. Falha se um `ALTER` segurar a trava exclusiva por mais de 1 s ou reescrever a tabela. Este portão não foi executado no laboratório: o README registra H2 em modo PostgreSQL. O H2 não prova o limite de 1 s.
 3. Coexistência. Com o `RENAME` do incidente, a imagem antiga receberia `column "status_pagamento" does not exist` no primeiro pedido, e o PR de promoção não abriria. `MigracaoExpandContractTest` reproduz os dois repositórios e recusa `DROP` ou `RENAME` em `db/migration`.
 4. Saga com verificação negativa. Estoque esgota antes do Pix: `CANCELADO_SEM_COBRANCA`, e falha se houver cobrança, estorno ou `CONCLUIDO` sem reserva. Reserva expira durante um Pix lento: `CANCELADO_COM_ESTORNO` e exatamente uma devolução, mesmo com evento e webhook repetidos. PSP mudo: consulta o status antes de decidir, e falha se estornar ou cancelar enquanto o status é desconhecido. Estoque mudo: consulta a reserva pelo `orderId`; sem reserva, cancela sem cobrança. Mensagens fora de ordem: atrasado que mudaria o pedido para `CONCLUIDO` ou `CONFIRMADO` é rejeitado. A exceção do Pix atrasado está na [regra única](../Aula%204/apendice-maquina-de-estados.md#linha-de-pagamento).
-5. Três relógios. O estorno usa `proxima_tentativa_em` (1 s, 5 s, 30 s, 2 min, 10 min), com um poll curto o bastante para a espera de 1 s. `PAGO` e os outros passos não finais usam `prazo_passo` (ex.: 30 s) e ficam fora do job de 5 min. Esse job de 5 min só olha a revisão de 24 h (`ESTORNO_EM_REVISAO`) e a consulta diária. Cinco tentativas abrem a revisão. 24 h sem confirmação abrem `ESTORNO_FALHOU`; a consulta diária ainda pode fechar sem uma segunda devolução. O teste: pedido em `ESTORNO_EM_REVISAO` com PSP "estornado" sai para `CANCELADO_COM_ESTORNO` sem chamada nova.
+5. Três relógios. Falha 1 espera 1 s, falha 2 espera 5 s, falha 3 espera 30 s, falha 4 espera 2 min, e a falha 5 abre a revisão. Poll é uma consulta repetida, curta o bastante para a espera de 1 s. Não há quinta espera. `PAGO` e os outros passos não finais usam `prazo_passo` (ex.: 30 s) e ficam fora do job de 5 min. Esse job de 5 min só olha a revisão de 24 h (`ESTORNO_EM_REVISAO`) e a consulta diária. 24 h sem confirmação abrem `ESTORNO_FALHOU`; a consulta diária ainda pode fechar sem uma segunda devolução. O teste: pedido em `ESTORNO_EM_REVISAO` com PSP "estornado" sai para `CANCELADO_COM_ESTORNO` sem chamada nova.
 6. Portão final: só com 1 a 5 verdes a esteira abre o PR de promoção. O canary faz a última verificação, com clientes reais e reversão automática.
 
 ## Custo de cada escolha
